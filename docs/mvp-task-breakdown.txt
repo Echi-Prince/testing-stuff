@@ -1,0 +1,26 @@
+MVP Task Breakdown
+
+Backend
+1. Replace stub file handling with actual audio decoding.
+2. Add waveform resampling and normalization.
+3. Generate log-mel spectrogram features.
+4. Integrate a baseline multi-label classifier.
+5. Return real event spans instead of placeholder detections.
+
+Frontend
+1. Build an upload view.
+2. Show analysis state and errors.
+3. Render detections on a timeline.
+4. Add class-level suppression toggles.
+
+Audio Processing
+1. Define the feature extraction pipeline.
+2. Choose a first model checkpoint or training baseline.
+3. Add offline suppression for one target sound class.
+4. Export processed audio for comparison.
+
+Quality Gates
+1. Backend starts locally with no errors.
+2. Analyze endpoint accepts a file and returns valid JSON.
+3. Config endpoint matches the supported class list.
+4. Repository structure is ready for model integration.
