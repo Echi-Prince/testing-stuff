@@ -1,0 +1,79 @@
+Progress So Far
+
+Repository Setup
+1. Git was installed on the machine.
+2. The GitHub repository was cloned locally and connected to `origin`.
+3. Repo-local git identity was configured for commits and pushes.
+
+Planning Documents Added
+1. `sound-dashboard-build-plan.txt`
+   - High-level phased plan for the sound dashboard project.
+2. `sound-dashboard-technical-plan.txt`
+   - More detailed technical architecture, data, model, backend, frontend, and testing plan.
+
+Initial Project Scaffold Added
+1. `backend/`
+   - FastAPI backend scaffold.
+2. `frontend/`
+   - Placeholder frontend directory and notes.
+3. `docs/`
+   - MVP task breakdown document.
+4. `README.md`
+   - Updated to describe the project structure and backend API.
+
+Backend API Progress
+1. Added `GET /health`
+   - Confirms the backend service is running.
+2. Added `GET /config`
+   - Returns current backend settings such as sample rate, chunk duration, overlap, and supported classes.
+3. Added `POST /analyze`
+   - First started as a placeholder route.
+   - Then upgraded into a real WAV analysis pipeline.
+
+Audio Processing Progress
+1. Added PCM WAV decoding support.
+2. Added mono conversion from uploaded audio frames.
+3. Added extracted metadata in the response:
+   - sample rate
+   - number of channels
+   - sample width
+   - duration
+   - frame count
+4. Added computed audio features in the response:
+   - RMS
+   - peak amplitude
+   - zero crossing rate
+   - dominant activity ratio
+5. Added prototype heuristic detections based on extracted features.
+
+Files Added or Updated for the Backend
+1. `backend/app/main.py`
+   - API routes and uploaded-audio handling.
+2. `backend/app/audio.py`
+   - WAV decoding, mono conversion, feature extraction, and prototype detections.
+3. `backend/app/schemas.py`
+   - Response models for health, metadata, features, and detections.
+4. `backend/app/config.py`
+   - Config values for the current prototype.
+5. `backend/requirements.txt`
+   - Backend dependencies.
+
+Current State of the Prototype
+1. The backend can accept a PCM WAV file through `/analyze`.
+2. The backend returns real metadata and feature values from the uploaded file.
+3. The returned detections are still heuristic placeholders, not model-backed AI predictions yet.
+4. The frontend has not been implemented yet beyond placeholder structure.
+
+Verification Completed
+1. The backend source files were checked with Python compilation:
+   - `python -m py_compile backend\app\main.py backend\app\audio.py backend\app\schemas.py backend\app\config.py`
+
+What Is Still Missing
+1. Shared waveform normalization and resampling.
+2. Log-mel spectrogram or similar feature generation for model input.
+3. A trained or integrated classifier for real AI sound detection.
+4. Selective suppression processing for chosen sound classes.
+5. A dashboard frontend for uploads, visualizations, and controls.
+
+Recommended Next Step
+The next best implementation step is to replace heuristic detections with a real model-ready feature pipeline and then connect a baseline sound classifier to the `/analyze` route.
