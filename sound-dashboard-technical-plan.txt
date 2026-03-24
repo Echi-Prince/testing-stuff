@@ -1,0 +1,337 @@
+Sound Dashboard Technical Plan
+
+System Objective
+Build a real-time or near-real-time audio system that identifies sound events, optionally estimates their direction, and selectively suppresses chosen sound classes while preserving desired audio.
+
+Technical Scope
+The system should support:
+1. Audio ingestion from uploaded files and later live microphones.
+2. Sound event detection and classification.
+3. Optional source localization with multiple microphones.
+4. Selective suppression through source separation or spectral masking.
+5. A dashboard for visualization, control, and playback.
+
+High-Level Architecture
+1. Input Layer
+   Responsibilities:
+   - Capture audio from file uploads or live microphone streams.
+   - Normalize sample rate, channel count, and chunk size.
+   Outputs:
+   - Fixed-length audio windows with timestamps.
+
+2. Feature Extraction Layer
+   Responsibilities:
+   - Convert raw waveforms into model-friendly features.
+   - Generate log-mel spectrograms, STFT features, or embeddings.
+   Outputs:
+   - Feature tensors for inference.
+
+3. Inference Layer
+   Responsibilities:
+   - Detect sound classes in each window.
+   - Estimate confidence scores and event time ranges.
+   - Optionally estimate direction of arrival for active sound sources.
+   Outputs:
+   - Event labels, scores, and optional direction estimates.
+
+4. Suppression Layer
+   Responsibilities:
+   - Isolate target sounds with source separation or spectral masks.
+   - Apply attenuation rules by class.
+   - Reconstruct the audio stream.
+   Outputs:
+   - Processed waveform for monitoring or export.
+
+5. Application Layer
+   Responsibilities:
+   - Manage model serving, user configuration, and event history.
+   - Coordinate audio processing and dashboard updates.
+   Outputs:
+   - API responses, websocket events, and saved processing sessions.
+
+6. Dashboard Layer
+   Responsibilities:
+   - Show waveform, spectrogram, active labels, and suppression settings.
+   - Provide playback and rule controls.
+   Outputs:
+   - User actions that update processing rules in real time.
+
+Recommended Stack
+Backend and ML:
+1. Python 3.11 or newer.
+2. PyTorch for training and inference.
+3. torchaudio for feature transforms and audio utilities.
+4. librosa and scipy for DSP experiments and offline preprocessing.
+
+Serving and Orchestration:
+1. FastAPI for REST endpoints and websocket streaming.
+2. Uvicorn for local serving.
+3. Pydantic for configuration and request schemas.
+
+Frontend:
+1. React with TypeScript for a durable dashboard.
+2. Web Audio API for browser playback and monitoring.
+3. A charting layer for waveform and event rendering.
+
+Audio Capture:
+1. sounddevice or PyAudio for local microphone streaming.
+2. FFmpeg as an optional utility for format conversion.
+
+Observability:
+1. Structured logs for model predictions, latency, and failures.
+2. Prometheus or simple metrics logging for early profiling.
+
+Model Strategy
+Part A: Sound Event Detection
+Goal:
+Identify which sound classes are active in each short audio window.
+
+Input:
+1. Mono waveform chunks at a fixed sample rate such as 16 kHz or 32 kHz.
+2. Window sizes around 0.5 to 2.0 seconds with overlap.
+
+Model Options:
+1. Baseline CNN on log-mel spectrograms.
+2. CRNN for better time context.
+3. Audio transformer or pretrained audio encoder for stronger accuracy.
+
+Output:
+1. Multi-label probabilities per sound class.
+2. Event start and end times after temporal smoothing.
+
+Evaluation:
+1. Precision, recall, and F1 by class.
+2. False positive rate for confusing classes.
+3. Detection latency for live inference.
+
+Part B: Selective Suppression
+Goal:
+Reduce only chosen sound classes while preserving the rest.
+
+Approaches:
+1. Spectral masking:
+   - Predict a mask over the time-frequency representation.
+   - Apply attenuation only where the target source is dominant.
+2. Source separation:
+   - Use a separation model to estimate target and non-target stems.
+   - Reduce the target stem and recombine the remainder.
+3. Directional filtering:
+   - If microphone arrays are available, use beamforming to reduce sounds from specific directions.
+
+Output:
+1. Reconstructed waveform with target classes attenuated.
+
+Evaluation:
+1. Signal-to-distortion and signal-to-interference style metrics where feasible.
+2. Human listening tests for artifacts and intelligibility.
+3. Latency and CPU or GPU load under streaming conditions.
+
+Part C: Source Localization
+Goal:
+Estimate where sound sources are located when multiple microphones are used.
+
+Requirements:
+1. A microphone array with known geometry.
+2. Time synchronization across channels.
+
+Methods:
+1. GCC-PHAT for basic direction estimation.
+2. Delay-and-sum beamforming for directional enhancement.
+3. More advanced neural localization only after a basic array pipeline works.
+
+Output:
+1. Approximate angle of arrival.
+2. Optional per-event direction markers in the UI.
+
+Data Plan
+Classification Data:
+1. Use public sound event datasets for environmental and household sounds.
+2. Build a unified label taxonomy so class names remain consistent.
+3. Rebalance classes if common sounds dominate the dataset.
+
+Separation Data:
+1. Use mixture datasets where isolated components are available.
+2. Create synthetic mixtures that combine desired and unwanted sources.
+3. Keep a validation set with realistic overlapping sounds.
+
+Custom Data:
+1. Record samples from the real deployment environment.
+2. Include microphone noise, room acoustics, and overlapping events.
+3. Track metadata such as room type, device type, and source distance.
+
+Pipeline Design
+Offline Prototype Pipeline:
+1. Load audio file.
+2. Resample and normalize.
+3. Split into overlapping windows.
+4. Run feature extraction.
+5. Run sound event detection.
+6. Build a timeline of active sound classes.
+7. Apply selective suppression to the chosen target class.
+8. Export processed audio and metadata.
+
+Real-Time Pipeline:
+1. Open microphone stream.
+2. Buffer short frames into rolling windows.
+3. Extract features incrementally.
+4. Run classifier inference.
+5. Smooth predictions over time to reduce flicker.
+6. Apply suppression rules.
+7. Stream processed audio to output and event data to the dashboard.
+
+Latency Targets
+Recommended early targets:
+1. Detection update interval under 250 ms for a responsive dashboard.
+2. End-to-end processed audio delay under 500 ms for prototype use.
+3. Model inference time below the size of the processing window.
+
+If these targets are missed:
+1. Reduce model size.
+2. Increase batch efficiency only where it does not harm interactivity.
+3. Lower sample rate or feature resolution carefully.
+4. Move from CPU to GPU if available.
+
+Backend Service Design
+Core Modules:
+1. input/
+   - file_loader.py
+   - mic_stream.py
+2. audio/
+   - resample.py
+   - chunking.py
+   - features.py
+   - reconstruction.py
+3. models/
+   - classifier.py
+   - separator.py
+   - localizer.py
+4. services/
+   - inference_service.py
+   - suppression_service.py
+   - session_service.py
+5. api/
+   - routes for upload, prediction, processing, config, and health.
+6. config/
+   - model paths, class labels, thresholds, hardware settings.
+
+Suggested API Endpoints
+1. POST /audio/upload
+   - Accept audio file for offline analysis.
+2. POST /audio/process
+   - Process an uploaded file with selected suppression settings.
+3. GET /events/{session_id}
+   - Return detected sound timeline for a session.
+4. WS /stream/live
+   - Stream live events and suppression state updates.
+5. GET /health
+   - Return readiness and model load state.
+
+Frontend Dashboard Design
+Primary Views:
+1. Live Monitor
+   - Waveform
+   - Spectrogram
+   - Active sound labels
+   - Confidence bars
+2. Processing Controls
+   - Per-class enable and suppress toggles
+   - Attenuation sliders
+   - Input and output gain controls
+3. Session Review
+   - Event timeline
+   - Playback before and after processing
+   - Export panel
+
+State Model:
+1. Active session metadata.
+2. Current audio source and stream state.
+3. Latest detections and suppression rules.
+4. Historical event timeline.
+5. Errors and performance counters.
+
+MVP Milestones
+Milestone 1: Offline Detection Demo
+1. Accept uploaded audio.
+2. Detect 5 to 10 classes.
+3. Render event timeline and confidence scores.
+
+Milestone 2: Offline Selective Suppression
+1. Select one target class for reduction.
+2. Export processed audio.
+3. Compare original versus processed playback.
+
+Milestone 3: Live Detection Dashboard
+1. Stream microphone audio.
+2. Show live spectrogram and labels.
+3. Update detections every few hundred milliseconds.
+
+Milestone 4: Live Selective Suppression
+1. Apply simple real-time suppression.
+2. Tune buffering and latency.
+3. Add fallback behavior on overload.
+
+Milestone 5: Direction Tracking
+1. Add microphone array support.
+2. Show approximate sound direction.
+3. Add directional suppression experiments.
+
+Testing Plan
+Unit Tests:
+1. Feature extraction shape and normalization checks.
+2. Audio chunking and overlap logic.
+3. Thresholding and smoothing logic for event activation.
+
+Integration Tests:
+1. File upload through processed output.
+2. Live stream ingestion through prediction updates.
+3. Model loading and config switching.
+
+Performance Tests:
+1. CPU and memory usage under continuous streaming.
+2. Inference time by model version.
+3. Output latency under realistic load.
+
+Human Evaluation:
+1. Verify whether desired audio remains intelligible.
+2. Score perceived artifact severity.
+3. Compare suppression strength settings.
+
+Key Risks and Mitigations
+Risk:
+Single-channel audio may not separate overlapping sources well.
+Mitigation:
+Start with narrow classes and offline processing; add microphone arrays later if direction matters.
+
+Risk:
+Real-time latency may be too high.
+Mitigation:
+Use a smaller baseline model first and profile each stage before adding complexity.
+
+Risk:
+Suppression may damage desired audio.
+Mitigation:
+Expose attenuation as a slider rather than hard muting and validate with listening tests.
+
+Risk:
+Dataset mismatch may reduce real-world accuracy.
+Mitigation:
+Collect a small custom dataset from the intended use environment and fine-tune.
+
+Proposed Repository Layout
+1. backend/
+2. frontend/
+3. models/
+4. data/
+5. scripts/
+6. tests/
+7. docs/
+
+Example First Sprint
+1. Set up backend project structure and config system.
+2. Add audio upload and preprocessing pipeline.
+3. Integrate a baseline sound classifier.
+4. Return detected labels and timestamps through an API.
+5. Build a simple dashboard that visualizes predictions for uploaded audio.
+
+Expected First Technical Deliverable
+A local application that accepts an audio file, classifies target sound events, lets the user choose one class to reduce, produces processed audio output, and displays a timeline of detections with confidence values.
