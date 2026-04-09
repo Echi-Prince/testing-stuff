@@ -362,6 +362,62 @@ def resample_waveform(
     return resampled_samples
 
 
+def suppress_detected_classes(
+    samples: list[float],
+    detections: list[dict[str, float | int | str]],
+    class_attenuation_factors: dict[str, float],
+    sample_rate_hz: int,
+) -> list[float]:
+    if not samples or not class_attenuation_factors:
+        return samples[:]
+
+    processed_samples = samples[:]
+    attenuation_lookup = {
+        label.strip().lower(): max(0.0, min(1.0, factor))
+        for label, factor in class_attenuation_factors.items()
+        if label.strip()
+    }
+
+    for detection in detections:
+        label = str(detection["label"]).lower()
+        attenuation_factor = attenuation_lookup.get(label)
+        if attenuation_factor is None or attenuation_factor >= 1.0:
+            continue
+
+        start_ms = int(detection["start_ms"])
+        end_ms = int(detection["end_ms"])
+        start_index = max(0, int((start_ms / 1000) * sample_rate_hz))
+        end_index = min(len(processed_samples), int(math.ceil((end_ms / 1000) * sample_rate_hz)))
+
+        for index in range(start_index, end_index):
+            processed_samples[index] *= attenuation_factor
+
+    return processed_samples
+
+
+def encode_wav_mono(
+    samples: list[float], sample_rate_hz: int, sample_width_bytes: int = 2
+) -> bytes:
+    if sample_width_bytes != 2:
+        raise ValueError("Only 16-bit PCM encoding is currently supported.")
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(sample_width_bytes)
+        wav_file.setframerate(sample_rate_hz)
+
+        frames = bytearray()
+        for sample in samples:
+            bounded_sample = max(-1.0, min(1.0, sample))
+            pcm_value = int(bounded_sample * 32767.0)
+            frames.extend(pcm_value.to_bytes(2, byteorder="little", signed=True))
+
+        wav_file.writeframes(bytes(frames))
+
+    return buffer.getvalue()
+
+
 def _pcm_to_mono_samples(
     raw_frames: bytes, num_channels: int, sample_width_bytes: int
 ) -> list[float]:

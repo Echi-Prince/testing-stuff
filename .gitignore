@@ -3,3 +3,8 @@
 backend/.deps/
 __pycache__/
 *.pyc
+training/synthetic_data/
+training/artifacts/
+training/.deps/
+training/.venv/
+training/real_recordings/**/*.wav

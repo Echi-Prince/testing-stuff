@@ -186,12 +186,19 @@ class BaselineSoundClassifier:
 
 
 def build_classifier_detections(
-    classifier: BaselineSoundClassifier,
+    classifier: object,
+    samples: list[float],
+    sample_rate_hz: int,
     features: ComputedFeatures,
     spectral_features: SpectralFeatures,
     duration_ms: int,
 ) -> list[dict[str, float | int | str]]:
-    predictions = classifier.predict(features=features, spectral_features=spectral_features)
+    predictions = classifier.predict(
+        samples=samples,
+        sample_rate_hz=sample_rate_hz,
+        features=features,
+        spectral_features=spectral_features,
+    )
     end_ms = max(duration_ms, 1)
     return [
         {

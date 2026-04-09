@@ -290,6 +290,88 @@ button:focus-visible,
   gap: 14px;
 }
 
+.suppression-panel {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(0, 109, 119, 0.08);
+  border: 1px solid rgba(0, 109, 119, 0.12);
+}
+
+.suppression-grid {
+  display: grid;
+  grid-template-columns: 1.2fr 0.8fr;
+  gap: 18px;
+}
+
+.suppression-choices {
+  display: grid;
+  gap: 10px;
+}
+
+.choice-chip {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(0, 109, 119, 0.14);
+}
+
+.choice-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.choice-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.choice-value {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.choice-chip input[type="checkbox"] {
+  margin: 0;
+}
+
+.choice-chip input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.suppression-actions {
+  display: grid;
+  gap: 10px;
+}
+
+.slider-row {
+  display: grid;
+  gap: 8px;
+}
+
+.slider-row input {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.processed-player {
+  display: grid;
+  gap: 10px;
+}
+
+.compare-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .waveform-panel {
   display: grid;
   gap: 10px;
@@ -297,6 +379,12 @@ button:focus-visible,
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid var(--line);
+}
+
+.preview-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .waveform-meta {
@@ -324,6 +412,15 @@ button:focus-visible,
       transparent 1px,
       transparent 64px
     );
+  cursor: pointer;
+}
+
+.spectrogram-canvas {
+  width: 100%;
+  height: 180px;
+  display: block;
+  border-radius: 14px;
+  background: linear-gradient(180deg, rgba(27, 28, 29, 0.08), rgba(255, 255, 255, 0.55));
   cursor: pointer;
 }
 
@@ -385,6 +482,14 @@ code {
   }
 
   .results-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .suppression-grid {
     grid-template-columns: 1fr;
   }
 

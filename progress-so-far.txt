@@ -1,9 +1,17 @@
 Progress So Far
 
+Latest Local Milestone
+1. Added launch scripts for backend, frontend, and combined local startup.
+2. Added a trained-model loading path with a starter synthetic TorchScript artifact.
+3. Added real-recording manifest tooling for future labeled WAV collection.
+4. Fixed a frontend JavaScript startup error that could make the Run Analysis button appear unresponsive.
+
 Repository Setup
 1. Git was installed on the machine.
 2. The GitHub repository was cloned locally and connected to `origin`.
 3. Repo-local git identity was configured for commits and pushes.
+4. The latest pushed commit on `main` is:
+   - `f727c53 Add tested audio dashboard MVP`
 
 Planning Documents Added
 1. `sound-dashboard-build-plan.txt`
@@ -29,6 +37,9 @@ Backend API Progress
 3. Added `POST /analyze`
    - First started as a placeholder route.
    - Then upgraded into a real WAV analysis pipeline.
+4. Added `POST /process`
+   - Accepts a WAV file plus suppression settings.
+   - Returns a processed WAV preview using prototype class-based attenuation.
 
 Audio Processing Progress
 1. Added PCM WAV decoding support.
@@ -59,6 +70,7 @@ Audio Processing Progress
 9. Added a baseline classifier module that scores the supported sound classes.
 10. Replaced the old inline heuristic detections with classifier-backed predictions.
 11. Optimized log-mel extraction with a `numpy`-accelerated path and kept the pure-Python path as a fallback.
+12. Added WAV re-encoding and prototype span-based suppression utilities for processed output.
 
 Files Added or Updated for the Backend
 1. `backend/app/main.py`
@@ -74,7 +86,7 @@ Files Added or Updated for the Backend
 6. `backend/requirements.txt`
    - Backend dependencies, now including `numpy` for faster spectral processing.
 7. `backend/tests/test_pipeline.py`
-   - Unit and route-level tests for preprocessing, spectral extraction, classifier scoring, and analysis responses.
+   - Unit and route-level tests for preprocessing, spectral extraction, classifier scoring, analysis responses, and suppression output.
 
 Frontend Progress
 1. Replaced the frontend placeholder with a static dashboard MVP.
@@ -91,6 +103,10 @@ Frontend Progress
 8. Added clickable detection chips and timeline rows that scrub playback to the selected event.
 9. Added a live playback scrubber and selected-event summary panel.
 10. Added a browser-decoded waveform preview with click-to-seek interaction and event highlighting.
+11. Added a browser-side spectrogram preview synchronized with playback and event selection.
+12. Added frontend suppression controls that call `/process` and render a processed-audio preview player.
+13. Upgraded suppression controls to support per-class attenuation profiles and clearer original-versus-processed comparison playback.
+14. Added waveform and spectrogram review layers synchronized to playback.
 
 Current State of the Prototype
 1. The backend can accept a PCM WAV file through `/analyze`.
@@ -100,7 +116,14 @@ Current State of the Prototype
 5. The backend returns real metadata and feature values from the uploaded file.
 6. The response includes preprocessing metadata so later model inputs are traceable.
 7. The detections are classifier-backed, but still rules-based rather than model-trained AI predictions.
-8. The frontend has not been implemented yet beyond placeholder structure.
+8. The frontend now includes upload, playback, waveform review, spectrogram review, detection chips, suppression controls, processed-audio preview, and an interactive event timeline.
+9. The backend now includes the first offline training scaffold for replacing the rule-based classifier with a trained TorchScript artifact.
+10. The repo now includes a synthetic WAV dataset generator so the training/export path can be exercised locally before real labeled data is collected.
+11. A first synthetic-data-trained TorchScript artifact has been exported to `training/artifacts/latest/`.
+12. The backend is now configured to load that artifact by default through `trained_model_manifest_path`.
+13. The trained model path is active, but its detection quality is not meaningful yet because it was trained on a tiny synthetic starter dataset.
+14. The repo now includes a real-recording manifest builder so real WAV collection can be turned into a training manifest immediately.
+15. Root-level launch scripts now exist for easier local startup of backend, frontend, or both.
 
 Verification Completed
 1. The backend source files were checked with Python compilation:
@@ -118,19 +141,45 @@ Verification Completed
    - classifier detections returned without timing out
 6. Automated backend tests now pass:
    - `python -m unittest discover -s backend\tests -v`
-   - `Ran 8 tests in 0.165s`
+   - `Ran 15 tests`
    - `OK`
 7. The malformed-upload cases are now covered:
    - missing filename
    - empty file
    - invalid WAV payload
+8. The prototype suppression route is now covered:
+   - valid processed WAV response
+   - invalid attenuation factor rejection
+9. The model-loading scaffold is now covered:
+   - waveform input padding
+   - manifest loading
+   - baseline fallback when no trained artifact is configured
+10. The training code compiles, and the synthetic dataset generator can now be used to produce a starter manifest locally.
+11. A synthetic dataset with 21 WAV files was generated locally and loaded successfully through the manifest reader.
+12. A first training run completed:
+   - `training\.venv\Scripts\python -m training.train --manifest training\synthetic_data\manifest.jsonl --output-dir training\artifacts\latest --epochs 4 --batch-size 4`
+   - exported `model.ts` and `manifest.json`
+13. The backend app now imports successfully inside the training virtual environment with the trained artifact active:
+   - classifier backend name: `trained_model:waveform_cnn_v1`
+14. A direct `analyze_audio(...)` smoke test ran against a synthetic siren clip with the trained backend enabled.
+   - It returned `status: trained_model:waveform_cnn_v1`
+   - It returned zero detections, which confirms the current model is wired up but still low-quality.
+15. Real-data ingestion tooling is now present:
+   - `training/build_real_manifest.py`
+   - `training/real_recordings/README.md`
+   - manifest generation from either per-class or pre-split folder layouts
+16. Easier launch flow is now present:
+   - `start-backend.cmd` / `start-backend.ps1`
+   - `start-frontend.cmd` / `start-frontend.ps1`
+   - `start-dev.cmd` / `start-dev.ps1`
 
 What Is Still Missing
-1. A trained or integrated classifier for real AI sound detection.
-2. Selective suppression processing for chosen sound classes.
-3. Spectrogram visualization or exported waveform thumbnails, plus suppression controls in the frontend.
-4. Expanded test coverage for threshold tuning behavior and higher-level API integration cases.
-5. Session persistence for later playback and review.
+1. A real labeled dataset to replace the synthetic starter data for meaningful classifier quality.
+2. Retraining and threshold tuning based on validation results from real recordings.
+3. A more realistic suppression method than simple class-span attenuation.
+4. A more polished suppression UX with tighter synchronization, clearer comparison feedback, and persistent settings.
+5. Expanded test coverage for actual model inference and higher-level API integration cases.
+6. Session persistence for later playback and review.
 
 Recommended Next Step
-The next best implementation step is to replace the rule-based baseline classifier with a trained model while preserving the same `/analyze` response shape.
+The next best implementation step is to place real WAV clips into `training/real_recordings/`, run `training.build_real_manifest`, retrain into a new artifact directory, and then calibrate class thresholds so the trained backend starts producing useful detections.

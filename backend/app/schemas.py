@@ -48,6 +48,17 @@ class DetectionResult(BaseModel):
     end_ms: int
 
 
+class ProcessedAudio(BaseModel):
+    sample_rate_hz: int
+    duration_ms: int
+    sample_width_bytes: int
+    wav_byte_count: int
+    attenuation_factor: float
+    suppressed_classes: list[str]
+    class_attenuation_factors: dict[str, float]
+    wav_base64: str
+
+
 class AnalysisResponse(BaseModel):
     filename: str
     status: str
@@ -56,3 +67,12 @@ class AnalysisResponse(BaseModel):
     features: AudioFeatures
     spectral_features: SpectralFeatures
     detections: list[DetectionResult]
+
+
+class ProcessResponse(BaseModel):
+    filename: str
+    status: str
+    message: str
+    metadata: AudioMetadata
+    detections: list[DetectionResult]
+    processed_audio: ProcessedAudio

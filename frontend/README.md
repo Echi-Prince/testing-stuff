@@ -4,15 +4,20 @@ This directory now contains a static dashboard prototype for uploaded-audio anal
 
 Files
 1. `index.html`
-   - Dashboard markup, playback panel, waveform preview, and result containers.
+   - Dashboard markup, playback panel, suppression preview controls, waveform and spectrogram previews, and result containers.
 2. `styles.css`
-   - Visual layout, waveform styling, playback controls, and timeline styling.
+   - Visual layout, per-class suppression controls, comparison playback controls, waveform and spectrogram styling, and timeline styling.
 3. `app.js`
-   - Upload flow, API calls, result rendering, waveform decoding, and interactive playback/timeline behavior.
+   - Upload flow, per-class suppression profile requests, original-versus-processed playback comparison, waveform and spectrogram decoding, and interactive playback/timeline behavior.
 
 Local Run
-1. Start the backend API.
-2. From the `frontend/` directory, serve the files locally:
+1. From the repo root, the easiest launcher is:
+
+```powershell
+.\start-frontend.cmd
+```
+
+2. Manual fallback from the `frontend/` directory:
 
 ```powershell
 python -m http.server 3000

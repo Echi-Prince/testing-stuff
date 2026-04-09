@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import io
 import math
+import os
+import base64
+import json
 import unittest
 import wave
 
@@ -11,7 +14,12 @@ from fastapi import UploadFile
 from backend.app.audio import extract_log_mel_features, preprocess_audio
 from backend.app.classifier import BaselineSoundClassifier
 from backend.app.config import settings
-from backend.app.main import analyze_audio, health
+from backend.app.model_loader import (
+    build_inference_backend,
+    load_model_manifest,
+    prepare_waveform_input,
+)
+from backend.app.main import analyze_audio, health, process_audio
 
 
 def build_test_wav_bytes(
@@ -90,6 +98,52 @@ class AudioPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(predictions[0].confidence, predictions[-1].confidence)
         self.assertTrue(all(prediction.label in settings.supported_classes for prediction in predictions))
 
+    def test_prepare_waveform_input_pads_to_target_length(self) -> None:
+        prepared = prepare_waveform_input(samples=[0.1, -0.2, 0.3], input_sample_count=6)
+
+        self.assertEqual(prepared, [0.1, -0.2, 0.3, 0.0, 0.0, 0.0])
+
+    def test_model_manifest_loader_reads_export_metadata(self) -> None:
+        manifest_path = "backend/tests/tmp-model-manifest.json"
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {
+                        "model_name": "waveform_cnn_v1",
+                        "model_type": "torchscript_waveform_cnn",
+                        "class_names": ["speech", "music"],
+                        "sample_rate_hz": 16000,
+                        "input_sample_count": 16000,
+                        "confidence_threshold": 0.45,
+                        "weights_path": "model.ts",
+                        "normalization_target_peak": 0.95,
+                    }
+                )
+            )
+
+        try:
+            manifest = load_model_manifest(manifest_path)
+        finally:
+            if os.path.exists(manifest_path):
+                os.remove(manifest_path)
+
+        self.assertIsNotNone(manifest)
+        assert manifest is not None
+        self.assertEqual(manifest.model_name, "waveform_cnn_v1")
+        self.assertEqual(manifest.class_names, ["speech", "music"])
+        self.assertTrue(str(manifest.weights_path_obj).endswith("model.ts"))
+
+    def test_inference_backend_falls_back_to_baseline_when_manifest_missing(self) -> None:
+        backend = build_inference_backend(
+            supported_classes=settings.supported_classes,
+            confidence_threshold=settings.classifier_confidence_threshold,
+            baseline_name=settings.classifier_name,
+            manifest_path="",
+        )
+
+        self.assertEqual(backend.name, settings.classifier_name)
+        self.assertIsNone(backend.manifest)
+
 
 class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_health_route_returns_ok(self) -> None:
@@ -143,6 +197,80 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 400)
         self.assertTrue(context.exception.detail)
+
+    async def test_process_audio_returns_processed_wav_payload(self) -> None:
+        upload = UploadFile(
+            filename="sample.wav",
+            file=io.BytesIO(build_test_wav_bytes(duration_seconds=1.0)),
+        )
+
+        response = await process_audio(
+            file=upload,
+            suppressed_classes="traffic,music",
+            attenuation_factor=0.2,
+            suppression_profile="",
+        )
+
+        self.assertEqual(response.status, "suppression_prototype_v1")
+        self.assertEqual(response.processed_audio.sample_rate_hz, settings.sample_rate_hz)
+        self.assertEqual(response.processed_audio.suppressed_classes, ["traffic", "music"])
+        self.assertEqual(
+            response.processed_audio.class_attenuation_factors,
+            {"traffic": 0.2, "music": 0.2},
+        )
+        self.assertGreater(response.processed_audio.wav_byte_count, 100)
+        decoded_bytes = base64.b64decode(response.processed_audio.wav_base64)
+        self.assertTrue(decoded_bytes.startswith(b"RIFF"))
+
+    async def test_process_audio_accepts_per_class_suppression_profile(self) -> None:
+        upload = UploadFile(
+            filename="sample.wav",
+            file=io.BytesIO(build_test_wav_bytes(duration_seconds=1.0)),
+        )
+
+        response = await process_audio(
+            file=upload,
+            attenuation_factor=0.2,
+            suppression_profile=json.dumps({"traffic": 0.1, "music": 0.65}),
+        )
+
+        self.assertEqual(
+            response.processed_audio.class_attenuation_factors,
+            {"traffic": 0.1, "music": 0.65},
+        )
+        self.assertEqual(response.processed_audio.suppressed_classes, ["traffic", "music"])
+
+    async def test_process_audio_rejects_invalid_attenuation_factor(self) -> None:
+        upload = UploadFile(
+            filename="sample.wav",
+            file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.2)),
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            await process_audio(
+                file=upload,
+                suppressed_classes="traffic",
+                attenuation_factor=1.5,
+                suppression_profile="",
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("attenuation_factor", context.exception.detail)
+
+    async def test_process_audio_rejects_invalid_suppression_profile(self) -> None:
+        upload = UploadFile(
+            filename="sample.wav",
+            file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.2)),
+        )
+
+        with self.assertRaises(HTTPException) as context:
+            await process_audio(
+                file=upload,
+                suppression_profile='{"traffic": 1.4}',
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("suppression_profile", context.exception.detail.lower())
 
 
 if __name__ == "__main__":

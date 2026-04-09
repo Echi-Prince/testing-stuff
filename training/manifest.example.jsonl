@@ -1,0 +1,4 @@
+{"audio_path":"data/train/speech/example-001.wav","label":"speech","split":"train"}
+{"audio_path":"data/train/music/example-002.wav","label":"music","split":"train"}
+{"audio_path":"data/val/keyboard/example-003.wav","label":"keyboard","split":"val"}
+{"audio_path":"data/test/traffic/example-004.wav","label":"traffic","split":"test"}

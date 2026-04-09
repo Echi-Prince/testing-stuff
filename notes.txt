@@ -1,1 +1,29 @@
-Created from the Codex workspace on 2026-03-24.
+Project Notes
+
+Updated: 2026-04-09
+
+Current backend state
+1. `POST /analyze` and `POST /process` are working routes in the FastAPI app.
+2. The backend now supports loading a trained TorchScript classifier artifact through `trained_model_manifest_path`.
+3. The default configured artifact is `training/artifacts/latest/manifest.json`.
+4. That trained path is wired correctly, but the current model was trained only on tiny synthetic data and is not useful for real-world detection quality yet.
+5. The older baseline classifier fallback still exists in code for cases where the trained artifact fails to load.
+
+Current frontend state
+1. The dashboard supports WAV upload, analysis summaries, detections, playback, waveform preview, spectrogram preview, and suppression preview controls.
+2. A frontend startup bug was fixed by restoring missing helper functions in `frontend/app.js`.
+3. Local launch is now simpler through root-level scripts:
+   - `start-backend.cmd`
+   - `start-frontend.cmd`
+   - `start-dev.cmd`
+
+Training pipeline state
+1. `training/generate_synthetic_dataset.py` creates a starter labeled synthetic WAV dataset.
+2. `training/train.py` trains a small waveform CNN and exports:
+   - `model.ts`
+   - `manifest.json`
+3. `training/build_real_manifest.py` converts real labeled WAV folders into a JSONL training manifest.
+4. Real recordings should be placed under `training/real_recordings/` following the layout documented in `training/real_recordings/README.md`.
+
+Main limitation
+1. The project needs real labeled WAV recordings per class before the trained classifier will produce meaningful detections.
