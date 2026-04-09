@@ -11,7 +11,7 @@ Repository Setup
 2. The GitHub repository was cloned locally and connected to `origin`.
 3. Repo-local git identity was configured for commits and pushes.
 4. The latest pushed commit on `main` is:
-   - `f727c53 Add tested audio dashboard MVP`
+   - `3b88d0f Add model training scaffold and launch scripts`
 
 Planning Documents Added
 1. `sound-dashboard-build-plan.txt`
