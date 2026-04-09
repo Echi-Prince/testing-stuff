@@ -33,47 +33,104 @@ Backend API Progress
 Audio Processing Progress
 1. Added PCM WAV decoding support.
 2. Added mono conversion from uploaded audio frames.
-3. Added extracted metadata in the response:
+3. Added waveform normalization to a shared target peak.
+4. Added linear resampling to the configured shared sample rate.
+5. Added log-mel spectral feature generation for model-ready analysis inputs.
+6. Added extracted metadata in the response:
    - sample rate
+   - processed sample rate
    - number of channels
    - sample width
    - duration
    - frame count
-4. Added computed audio features in the response:
+   - processed sample count
+   - normalization gain and peak values
+7. Added computed audio features in the response:
    - RMS
    - peak amplitude
    - zero crossing rate
    - dominant activity ratio
-5. Added prototype heuristic detections based on extracted features.
+8. Added compact log-mel summary values in the response:
+   - spectrogram frame count
+   - mel bin count
+   - min, max, and mean dB
+   - dynamic range
+   - low, mid, and high band means
+9. Added a baseline classifier module that scores the supported sound classes.
+10. Replaced the old inline heuristic detections with classifier-backed predictions.
+11. Optimized log-mel extraction with a `numpy`-accelerated path and kept the pure-Python path as a fallback.
 
 Files Added or Updated for the Backend
 1. `backend/app/main.py`
-   - API routes and uploaded-audio handling.
+   - API routes, uploaded-audio handling, and local frontend CORS support.
 2. `backend/app/audio.py`
-   - WAV decoding, mono conversion, feature extraction, and prototype detections.
+   - WAV decoding, mono conversion, preprocessing, and feature extraction.
 3. `backend/app/schemas.py`
    - Response models for health, metadata, features, and detections.
 4. `backend/app/config.py`
-   - Config values for the current prototype.
-5. `backend/requirements.txt`
-   - Backend dependencies.
+   - Config values for the current prototype and baseline classifier.
+5. `backend/app/classifier.py`
+   - Baseline classifier scoring and detection construction.
+6. `backend/requirements.txt`
+   - Backend dependencies, now including `numpy` for faster spectral processing.
+7. `backend/tests/test_pipeline.py`
+   - Unit and route-level tests for preprocessing, spectral extraction, classifier scoring, and analysis responses.
+
+Frontend Progress
+1. Replaced the frontend placeholder with a static dashboard MVP.
+2. Added a browser upload form for WAV files.
+3. Added result panels for:
+   - session status
+   - metadata
+   - waveform-derived features
+   - spectral summary values
+4. Added detection chips for returned sound labels and confidence scores.
+5. Added a simple event timeline that renders detected spans across clip duration.
+6. Added frontend run instructions in `frontend/README.md`.
+7. Added playback controls using the uploaded WAV file in the browser.
+8. Added clickable detection chips and timeline rows that scrub playback to the selected event.
+9. Added a live playback scrubber and selected-event summary panel.
+10. Added a browser-decoded waveform preview with click-to-seek interaction and event highlighting.
 
 Current State of the Prototype
 1. The backend can accept a PCM WAV file through `/analyze`.
-2. The backend returns real metadata and feature values from the uploaded file.
-3. The returned detections are still heuristic placeholders, not model-backed AI predictions yet.
-4. The frontend has not been implemented yet beyond placeholder structure.
+2. The backend now normalizes and resamples uploaded audio before feature extraction.
+3. The backend now computes a log-mel spectrogram summary on the processed waveform.
+4. The backend now runs a baseline classifier over extracted waveform and spectral summaries.
+5. The backend returns real metadata and feature values from the uploaded file.
+6. The response includes preprocessing metadata so later model inputs are traceable.
+7. The detections are classifier-backed, but still rules-based rather than model-trained AI predictions.
+8. The frontend has not been implemented yet beyond placeholder structure.
 
 Verification Completed
 1. The backend source files were checked with Python compilation:
-   - `python -m py_compile backend\app\main.py backend\app\audio.py backend\app\schemas.py backend\app\config.py`
+   - `python -m py_compile backend\app\main.py backend\app\audio.py backend\app\schemas.py backend\app\config.py backend\app\classifier.py`
+2. The backend app import was verified with local dependencies installed into `backend/.deps`.
+3. A live `GET /health` request returned:
+   - `{"status":"ok"}`
+4. A live `POST /analyze` request with a short synthetic WAV file returned:
+   - `status: baseline_rules_v1`
+   - classifier detections
+   - spectral feature summary values
+5. A live `POST /analyze` request with a 1-second synthetic WAV file completed successfully after the spectral optimization:
+   - `elapsed_seconds: 0.0969`
+   - `spectral_frame_count: 99`
+   - classifier detections returned without timing out
+6. Automated backend tests now pass:
+   - `python -m unittest discover -s backend\tests -v`
+   - `Ran 8 tests in 0.165s`
+   - `OK`
+7. The malformed-upload cases are now covered:
+   - missing filename
+   - empty file
+   - invalid WAV payload
 
 What Is Still Missing
-1. Shared waveform normalization and resampling.
-2. Log-mel spectrogram or similar feature generation for model input.
-3. A trained or integrated classifier for real AI sound detection.
-4. Selective suppression processing for chosen sound classes.
-5. A dashboard frontend for uploads, visualizations, and controls.
+1. A trained or integrated classifier for real AI sound detection.
+2. Selective suppression processing for chosen sound classes.
+3. Spectrogram visualization or exported waveform thumbnails, plus suppression controls in the frontend.
+4. Expanded test coverage for threshold tuning behavior and higher-level API integration cases.
+5. Session persistence for later playback and review.
 
 Recommended Next Step
-The next best implementation step is to replace heuristic detections with a real model-ready feature pipeline and then connect a baseline sound classifier to the `/analyze` route.
+The next best implementation step is to replace the rule-based baseline classifier with a trained model while preserving the same `/analyze` response shape.

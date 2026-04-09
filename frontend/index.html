@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sound Dashboard</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <section class="hero">
+        <p class="eyebrow">Uploaded Audio Analysis</p>
+        <h1>Sound Dashboard MVP</h1>
+        <p class="lede">
+          Upload a PCM WAV file to inspect preprocessing metadata, classifier detections,
+          and a compact event timeline from the backend pipeline.
+        </p>
+      </section>
+
+      <section class="panel uploader">
+        <div>
+          <h2>Analyze File</h2>
+          <p class="muted">Backend target: <code>http://127.0.0.1:8000/analyze</code></p>
+        </div>
+        <form id="upload-form" class="upload-form">
+          <label class="file-input">
+            <span>Select WAV file</span>
+            <input id="file-input" type="file" accept=".wav,audio/wav" required />
+          </label>
+          <button id="submit-button" type="submit">Run Analysis</button>
+        </form>
+        <p id="status-banner" class="status-banner" aria-live="polite">
+          Waiting for an upload.
+        </p>
+      </section>
+
+      <section class="results-grid">
+        <article class="panel">
+          <h2>Session</h2>
+          <dl id="session-summary" class="metric-list empty-state">
+            <div>
+              <dt>Status</dt>
+              <dd>No analysis yet</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="panel">
+          <h2>Metadata</h2>
+          <dl id="metadata-summary" class="metric-list empty-state">
+            <div>
+              <dt>Processed Rate</dt>
+              <dd>Waiting for results</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="panel">
+          <h2>Features</h2>
+          <dl id="feature-summary" class="metric-list empty-state">
+            <div>
+              <dt>RMS</dt>
+              <dd>Waiting for results</dd>
+            </div>
+          </dl>
+        </article>
+
+        <article class="panel">
+          <h2>Spectral</h2>
+          <dl id="spectral-summary" class="metric-list empty-state">
+            <div>
+              <dt>Frames</dt>
+              <dd>Waiting for results</dd>
+            </div>
+          </dl>
+        </article>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Detected Events</h2>
+          <p class="muted">Highest-confidence labels returned by the baseline classifier.</p>
+        </div>
+        <div id="detections" class="detections empty-state">No detections yet.</div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Playback</h2>
+          <p class="muted">Review the uploaded clip and jump directly to detected spans.</p>
+        </div>
+        <div id="playback-panel" class="playback-panel empty-state">
+          Upload a WAV file to enable playback controls.
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-head">
+          <h2>Timeline</h2>
+          <p class="muted">Click a detected span to scrub the player and inspect that interval.</p>
+        </div>
+        <div id="timeline" class="timeline empty-state">No timeline yet.</div>
+        <div id="selection-summary" class="selection-summary empty-state">
+          No event selected.
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js" defer></script>
+  </body>
+</html>

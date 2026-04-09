@@ -5,6 +5,8 @@ class AppConfig(BaseModel):
     sample_rate_hz: int = 16000
     chunk_duration_ms: int = 1000
     chunk_overlap_ms: int = 500
+    classifier_name: str = "baseline_rules_v1"
+    classifier_confidence_threshold: float = 0.45
     supported_classes: list[str] = [
         "speech",
         "keyboard",

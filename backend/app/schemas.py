@@ -7,10 +7,16 @@ class HealthResponse(BaseModel):
 
 class AudioMetadata(BaseModel):
     sample_rate_hz: int
+    processed_sample_rate_hz: int
     num_channels: int
     sample_width_bytes: int
     duration_ms: int
     frame_count: int
+    processed_sample_count: int
+    was_resampled: bool
+    original_peak_amplitude: float
+    normalized_peak_amplitude: float
+    normalization_gain: float
 
 
 class AudioFeatures(BaseModel):
@@ -18,6 +24,21 @@ class AudioFeatures(BaseModel):
     peak_amplitude: float
     zero_crossing_rate: float
     dominant_activity_ratio: float
+
+
+class SpectralFeatures(BaseModel):
+    frame_count: int
+    mel_bin_count: int
+    frame_size: int
+    hop_size: int
+    fft_size: int
+    min_db: float
+    max_db: float
+    mean_db: float
+    dynamic_range_db: float
+    low_band_mean_db: float
+    mid_band_mean_db: float
+    high_band_mean_db: float
 
 
 class DetectionResult(BaseModel):
@@ -33,4 +54,5 @@ class AnalysisResponse(BaseModel):
     message: str
     metadata: AudioMetadata
     features: AudioFeatures
+    spectral_features: SpectralFeatures
     detections: list[DetectionResult]
