@@ -60,8 +60,11 @@ class ProcessedAudio(BaseModel):
 
 
 class AnalysisResponse(BaseModel):
+    session_id: str
     filename: str
     status: str
+    classifier_source: str
+    used_fallback: bool
     message: str
     metadata: AudioMetadata
     features: AudioFeatures
@@ -70,9 +73,36 @@ class AnalysisResponse(BaseModel):
 
 
 class ProcessResponse(BaseModel):
+    session_id: str
     filename: str
     status: str
+    classifier_source: str
+    used_fallback: bool
     message: str
     metadata: AudioMetadata
     detections: list[DetectionResult]
     processed_audio: ProcessedAudio
+
+
+class SessionListItem(BaseModel):
+    session_id: str
+    filename: str
+    created_at: str
+    updated_at: str
+    status: str
+    detection_count: int
+    has_processed_audio: bool
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionListItem]
+
+
+class SessionDetailResponse(BaseModel):
+    session_id: str
+    filename: str
+    created_at: str
+    updated_at: str
+    original_audio_base64: str
+    analysis: AnalysisResponse
+    processed_response: ProcessResponse | None

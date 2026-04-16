@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from collections import Counter, defaultdict
 
+from backend.app.audio import decode_wav
 from backend.app.config import settings
 from training.dataset import build_examples_from_labeled_directory, write_manifest
 
@@ -49,6 +50,15 @@ def main() -> None:
         test_ratio=args.test_ratio,
         seed=args.seed,
     )
+    readable_examples = []
+    skipped_examples = []
+    for example in examples:
+        try:
+            decode_wav(example.audio_path.read_bytes())
+            readable_examples.append(example)
+        except Exception as exc:
+            skipped_examples.append((example, str(exc)))
+    examples = readable_examples
     if not examples:
         raise SystemExit(
             "No WAV files were found. Place recordings in training/real_recordings/<label>/"
@@ -71,6 +81,10 @@ def main() -> None:
     print(f"Total examples: {len(examples)}")
     print(f"By split: {dict(sorted(by_split.items()))}")
     print(f"By label: {dict(sorted(by_label.items()))}")
+    if skipped_examples:
+        print(f"Skipped unreadable WAV files: {len(skipped_examples)}")
+        for example, reason in skipped_examples:
+            print(f"  {example.audio_path}: {reason}")
     print("Per-label splits:")
     for label in settings.supported_classes:
         counts = label_split_table.get(label)

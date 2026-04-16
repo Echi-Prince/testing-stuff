@@ -94,9 +94,17 @@ class TorchscriptWaveformClassifier:
 
 
 @dataclass
+class PredictionResult:
+    predictions: list[ClassPrediction]
+    source_name: str
+    used_fallback: bool
+
+
+@dataclass
 class InferenceBackend:
     name: str
     predictor: Any
+    fallback_predictor: Any | None = None
     manifest: ModelArtifactManifest | None = None
     fallback_reason: str = ""
 
@@ -107,9 +115,46 @@ class InferenceBackend:
         features: ComputedFeatures,
         spectral_features: SpectralFeatures,
     ) -> list[ClassPrediction]:
-        if self.manifest is not None and sample_rate_hz == self.manifest.sample_rate_hz:
-            return self.predictor.predict(samples)
-        return self.predictor.predict(features=features, spectral_features=spectral_features)
+        return self.predict_with_metadata(
+            samples=samples,
+            sample_rate_hz=sample_rate_hz,
+            features=features,
+            spectral_features=spectral_features,
+        ).predictions
+
+    def predict_with_metadata(
+        self,
+        samples: list[float],
+        sample_rate_hz: int,
+        features: ComputedFeatures,
+        spectral_features: SpectralFeatures,
+    ) -> PredictionResult:
+        if (
+            isinstance(self.predictor, TorchscriptWaveformClassifier)
+            and self.manifest is not None
+            and sample_rate_hz == self.manifest.sample_rate_hz
+        ):
+            predictions = self.predictor.predict(samples)
+            if predictions or self.fallback_predictor is None:
+                return PredictionResult(
+                    predictions=predictions,
+                    source_name=self.name,
+                    used_fallback=False,
+                )
+
+        predictor = self.fallback_predictor or self.predictor
+        fallback_predictions = predictor.predict(features=features, spectral_features=spectral_features)
+        if not fallback_predictions and isinstance(predictor, BaselineSoundClassifier):
+            fallback_predictions = predictor.predict_ranked(
+                features=features,
+                spectral_features=spectral_features,
+            )[:1]
+        fallback_name = self.name if predictor is self.predictor else "baseline_rules_v1"
+        return PredictionResult(
+            predictions=fallback_predictions,
+            source_name=fallback_name,
+            used_fallback=predictor is not self.predictor,
+        )
 
 
 def build_inference_backend(
@@ -134,6 +179,7 @@ def build_inference_backend(
         return InferenceBackend(
             name=baseline_name,
             predictor=baseline,
+            fallback_predictor=baseline,
             manifest=manifest,
             fallback_reason="trained model artifact could not be loaded",
         )
@@ -141,5 +187,6 @@ def build_inference_backend(
     return InferenceBackend(
         name=f"trained_model:{manifest.model_name}",
         predictor=predictor,
+        fallback_predictor=baseline,
         manifest=manifest,
     )

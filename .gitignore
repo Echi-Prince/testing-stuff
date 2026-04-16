@@ -1,10 +1,13 @@
 .venv/
 .tmp/
+.tmp-tests/
 backend/.deps/
+backend/data/
 __pycache__/
 *.pyc
 training/synthetic_data/
 training/artifacts/
 training/.deps/
 training/.venv/
+training/real_recordings/manifest.jsonl
 training/real_recordings/**/*.wav

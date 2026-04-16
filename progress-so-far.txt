@@ -1,10 +1,10 @@
 Progress So Far
 
 Latest Local Milestone
-1. Added launch scripts for backend, frontend, and combined local startup.
-2. Added a trained-model loading path with a starter synthetic TorchScript artifact.
-3. Added real-recording manifest tooling for future labeled WAV collection.
-4. Fixed a frontend JavaScript startup error that could make the Run Analysis button appear unresponsive.
+1. Added saved-session persistence and reload support across the backend and frontend.
+2. Added classifier-source metadata so the UI can show when detections came from baseline fallback.
+3. Added empty-result fallback behavior so suppression controls still appear when the trained model returns no classes.
+4. Retuned the heuristic baseline so the current keyboard sample set ranks `keyboard` ahead of the old false positives.
 
 Repository Setup
 1. Git was installed on the machine.
@@ -40,6 +40,10 @@ Backend API Progress
 4. Added `POST /process`
    - Accepts a WAV file plus suppression settings.
    - Returns a processed WAV preview using prototype class-based attenuation.
+5. Added `GET /sessions`
+   - Returns recent saved analysis sessions.
+6. Added `GET /sessions/{session_id}`
+   - Returns a saved session with original audio, analysis response, and any saved processed preview.
 
 Audio Processing Progress
 1. Added PCM WAV decoding support.
@@ -71,6 +75,9 @@ Audio Processing Progress
 10. Replaced the old inline heuristic detections with classifier-backed predictions.
 11. Optimized log-mel extraction with a `numpy`-accelerated path and kept the pure-Python path as a fallback.
 12. Added WAV re-encoding and prototype span-based suppression utilities for processed output.
+13. Added session-store persistence for saved analysis and processed previews.
+14. Added trained-model fallback metadata so responses state which classifier source was actually used.
+15. Retuned the heuristic baseline to prioritize transient-heavy keyboard clips more accurately.
 
 Files Added or Updated for the Backend
 1. `backend/app/main.py`
@@ -107,6 +114,8 @@ Frontend Progress
 12. Added frontend suppression controls that call `/process` and render a processed-audio preview player.
 13. Upgraded suppression controls to support per-class attenuation profiles and clearer original-versus-processed comparison playback.
 14. Added waveform and spectrogram review layers synchronized to playback.
+15. Added a Recent Sessions panel that reloads saved analyses and processed previews from the backend.
+16. Added UI messaging that shows when detections came from baseline fallback instead of the trained model.
 
 Current State of the Prototype
 1. The backend can accept a PCM WAV file through `/analyze`.
@@ -119,11 +128,14 @@ Current State of the Prototype
 8. The frontend now includes upload, playback, waveform review, spectrogram review, detection chips, suppression controls, processed-audio preview, and an interactive event timeline.
 9. The backend now includes the first offline training scaffold for replacing the rule-based classifier with a trained TorchScript artifact.
 10. The repo now includes a synthetic WAV dataset generator so the training/export path can be exercised locally before real labeled data is collected.
-11. A first synthetic-data-trained TorchScript artifact has been exported to `training/artifacts/latest/`.
+11. A real-data-trained TorchScript artifact has been exported to `training/artifacts/real-v1/`.
 12. The backend is now configured to load that artifact by default through `trained_model_manifest_path`.
-13. The trained model path is active, but its detection quality is not meaningful yet because it was trained on a tiny synthetic starter dataset.
+13. The trained model path is active, but its detection quality still depends on more labeled real recordings and threshold tuning.
 14. The repo now includes a real-recording manifest builder so real WAV collection can be turned into a training manifest immediately.
 15. Root-level launch scripts now exist for easier local startup of backend, frontend, or both.
+16. Session persistence for later playback and review is now implemented end-to-end.
+17. Empty trained-model results now degrade to the baseline safety net instead of leaving the frontend with no suppressible classes.
+18. The baseline scorer now ranks the current keyboard sample as `keyboard` first.
 
 Verification Completed
 1. The backend source files were checked with Python compilation:
@@ -140,8 +152,8 @@ Verification Completed
    - `spectral_frame_count: 99`
    - classifier detections returned without timing out
 6. Automated backend tests now pass:
-   - `python -m unittest discover -s backend\tests -v`
-   - `Ran 15 tests`
+   - `training\.venv\Scripts\python -m unittest discover -s backend\tests -v`
+   - `Ran 19 tests`
    - `OK`
 7. The malformed-upload cases are now covered:
    - missing filename
@@ -172,6 +184,13 @@ Verification Completed
    - `start-backend.cmd` / `start-backend.ps1`
    - `start-frontend.cmd` / `start-frontend.ps1`
    - `start-dev.cmd` / `start-dev.ps1`
+17. Session persistence is now covered in automated backend tests:
+   - saved-session list and detail loading
+   - processed preview saved back onto an existing session
+18. Classifier fallback behavior is now covered in automated tests:
+   - trained model returns no classes
+   - baseline threshold filters every class
+   - best fallback match is still surfaced
 
 What Is Still Missing
 1. A real labeled dataset to replace the synthetic starter data for meaningful classifier quality.
@@ -179,7 +198,7 @@ What Is Still Missing
 3. A more realistic suppression method than simple class-span attenuation.
 4. A more polished suppression UX with tighter synchronization, clearer comparison feedback, and persistent settings.
 5. Expanded test coverage for actual model inference and higher-level API integration cases.
-6. Session persistence for later playback and review.
+6. Better real-data model quality so the trained path can replace the heuristic fallback more often.
 
 Recommended Next Step
 The next best implementation step is to place real WAV clips into `training/real_recordings/`, run `training.build_real_manifest`, retrain into a new artifact directory, and then calibrate class thresholds so the trained backend starts producing useful detections.

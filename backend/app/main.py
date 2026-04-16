@@ -17,6 +17,7 @@ from .audio import (
 from .classifier import build_classifier_detections
 from .config import settings
 from .model_loader import build_inference_backend
+from .session_store import create_analysis_session, list_sessions, load_session, update_processed_session
 from .schemas import (
     AnalysisResponse,
     AudioFeatures,
@@ -25,6 +26,8 @@ from .schemas import (
     HealthResponse,
     ProcessResponse,
     ProcessedAudio,
+    SessionDetailResponse,
+    SessionListResponse,
     SpectralFeatures,
 )
 
@@ -56,10 +59,13 @@ inference_backend = build_inference_backend(
 @dataclass
 class PreparedAnalysis:
     filename: str
+    file_bytes: bytes
     decoded_audio: object
     processed_audio: object
     features: object
     spectral_features: object
+    classifier_source: str
+    used_fallback: bool
     detections: list[DetectionResult]
 
 
@@ -73,13 +79,30 @@ async def config() -> dict:
     return settings.model_dump()
 
 
+@app.get("/sessions", response_model=SessionListResponse)
+async def get_sessions() -> SessionListResponse:
+    return SessionListResponse(sessions=list_sessions())
+
+
+@app.get("/sessions/{session_id}", response_model=SessionDetailResponse)
+async def get_session(session_id: str) -> SessionDetailResponse:
+    try:
+        session_record = load_session(session_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+    return SessionDetailResponse(**session_record)
+
+
 @app.post("/analyze", response_model=AnalysisResponse)
 async def analyze_audio(file: UploadFile = File(...)) -> AnalysisResponse:
     prepared = await _prepare_analysis(file)
-
-    return AnalysisResponse(
+    analysis_response = AnalysisResponse(
+        session_id="",
         filename=prepared.filename,
         status=inference_backend.name,
+        classifier_source=prepared.classifier_source,
+        used_fallback=prepared.used_fallback,
         message=(
             "Decoded WAV audio, normalized and resampled it to the shared target rate, "
             "computed prototype features, generated a log-mel summary for model-ready inputs, "
@@ -108,6 +131,12 @@ async def analyze_audio(file: UploadFile = File(...)) -> AnalysisResponse:
         ),
         detections=prepared.detections,
     )
+    session_record = create_analysis_session(
+        filename=prepared.filename,
+        analysis_response=analysis_response.model_dump(),
+        original_audio_base64=base64.b64encode(prepared.file_bytes).decode("ascii"),
+    )
+    return AnalysisResponse(**session_record["analysis"])
 
 
 @app.post("/process", response_model=ProcessResponse)
@@ -116,8 +145,10 @@ async def process_audio(
     suppressed_classes: str = Form(""),
     attenuation_factor: float = Form(settings.default_suppression_factor),
     suppression_profile: str = Form(""),
+    session_id: str = Form(""),
 ) -> ProcessResponse:
     prepared = await _prepare_analysis(file)
+    normalized_session_id = session_id.strip() if isinstance(session_id, str) else ""
     class_attenuation_factors = _build_suppression_profile(
         suppressed_classes=suppressed_classes,
         attenuation_factor=attenuation_factor,
@@ -137,9 +168,12 @@ async def process_audio(
         sample_rate_hz=prepared.processed_audio.sample_rate_hz,
     )
 
-    return ProcessResponse(
+    process_response = ProcessResponse(
+        session_id=normalized_session_id,
         filename=prepared.filename,
         status="suppression_prototype_v1",
+        classifier_source=prepared.classifier_source,
+        used_fallback=prepared.used_fallback,
         message=(
             "Analyzed the uploaded WAV, applied prototype class-based attenuation over "
             "matching detected spans, and returned a processed mono WAV preview."
@@ -157,6 +191,16 @@ async def process_audio(
             wav_base64=base64.b64encode(encoded_wav).decode("ascii"),
         ),
     )
+    if process_response.session_id:
+        try:
+            update_processed_session(
+                session_id=process_response.session_id,
+                process_response=process_response.model_dump(),
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+    return process_response
 
 
 async def _prepare_analysis(file: UploadFile) -> PreparedAnalysis:
@@ -185,24 +229,28 @@ async def _prepare_analysis(file: UploadFile) -> PreparedAnalysis:
         samples=processed_audio.samples,
         sample_rate_hz=processed_audio.sample_rate_hz,
     )
+    raw_detections, classifier_source, used_fallback = build_classifier_detections(
+        classifier=inference_backend,
+        samples=processed_audio.samples,
+        sample_rate_hz=processed_audio.sample_rate_hz,
+        features=features,
+        spectral_features=spectral_features,
+        duration_ms=decoded_audio.duration_ms,
+    )
     detections = [
         DetectionResult(**detection)
-        for detection in build_classifier_detections(
-            classifier=inference_backend,
-            samples=processed_audio.samples,
-            sample_rate_hz=processed_audio.sample_rate_hz,
-            features=features,
-            spectral_features=spectral_features,
-            duration_ms=decoded_audio.duration_ms,
-        )
+        for detection in raw_detections
     ]
 
     return PreparedAnalysis(
         filename=file.filename,
+        file_bytes=file_bytes,
         decoded_audio=decoded_audio,
         processed_audio=processed_audio,
         features=features,
         spectral_features=spectral_features,
+        classifier_source=classifier_source,
+        used_fallback=used_fallback,
         detections=detections,
     )
 

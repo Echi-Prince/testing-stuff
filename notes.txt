@@ -1,16 +1,20 @@
 Project Notes
 
-Updated: 2026-04-09
+Updated: 2026-04-16
 
 Current backend state
 1. `POST /analyze` and `POST /process` are working routes in the FastAPI app.
 2. The backend now supports loading a trained TorchScript classifier artifact through `trained_model_manifest_path`.
-3. The default configured artifact is `training/artifacts/latest/manifest.json`.
-4. That trained path is wired correctly, but the current model was trained only on tiny synthetic data and is not useful for real-world detection quality yet.
-5. The older baseline classifier fallback still exists in code for cases where the trained artifact fails to load.
+3. The default configured artifact is `training/artifacts/real-v1/manifest.json`.
+4. The backend now saves analysis sessions under `backend/data/sessions/` so the dashboard can reload prior analyses and processed previews.
+5. The backend now returns `classifier_source` and `used_fallback` so the frontend can show whether detections came from the trained model or the baseline fallback.
+6. The baseline fallback now covers two cases:
+   - the trained artifact fails to load
+   - the trained artifact returns no detections for a clip
+7. The heuristic baseline was retuned so the current keyboard sample set ranks `keyboard` ahead of the old false-positive classes.
 
 Current frontend state
-1. The dashboard supports WAV upload, analysis summaries, detections, playback, waveform preview, spectrogram preview, and suppression preview controls.
+1. The dashboard supports WAV upload, analysis summaries, detections, playback, waveform preview, spectrogram preview, suppression preview controls, a recent-session reload panel, and detection-source display for fallback transparency.
 2. A frontend startup bug was fixed by restoring missing helper functions in `frontend/app.js`.
 3. Local launch is now simpler through root-level scripts:
    - `start-backend.cmd`
@@ -26,4 +30,4 @@ Training pipeline state
 4. Real recordings should be placed under `training/real_recordings/` following the layout documented in `training/real_recordings/README.md`.
 
 Main limitation
-1. The project needs real labeled WAV recordings per class before the trained classifier will produce meaningful detections.
+1. The project still needs more real labeled WAV recordings per class plus threshold tuning before the trained classifier will produce reliably useful detections without leaning on the heuristic fallback.

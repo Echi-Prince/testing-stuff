@@ -8,7 +8,9 @@ class AppConfig(BaseModel):
     classifier_name: str = "baseline_rules_v1"
     classifier_confidence_threshold: float = 0.45
     default_suppression_factor: float = 0.2
-    trained_model_manifest_path: str = "training/artifacts/latest/manifest.json"
+    trained_model_manifest_path: str = "training/artifacts/real-v1/manifest.json"
+    session_store_dir: str = "backend/data/sessions"
+    session_list_limit: int = 20
     supported_classes: list[str] = [
         "speech",
         "keyboard",

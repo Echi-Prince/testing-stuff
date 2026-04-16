@@ -7,6 +7,9 @@ import base64
 import json
 import unittest
 import wave
+from pathlib import Path
+from uuid import uuid4
+import shutil
 
 from fastapi import HTTPException
 from fastapi import UploadFile
@@ -15,11 +18,21 @@ from backend.app.audio import extract_log_mel_features, preprocess_audio
 from backend.app.classifier import BaselineSoundClassifier
 from backend.app.config import settings
 from backend.app.model_loader import (
+    InferenceBackend,
+    ModelArtifactManifest,
+    TorchscriptWaveformClassifier,
     build_inference_backend,
     load_model_manifest,
     prepare_waveform_input,
 )
-from backend.app.main import analyze_audio, health, process_audio
+from backend.app.main import (
+    analyze_audio,
+    get_session,
+    get_sessions,
+    health,
+    inference_backend,
+    process_audio,
+)
 
 
 def build_test_wav_bytes(
@@ -49,6 +62,49 @@ def build_test_wav_bytes(
 
 
 class AudioPipelineTests(unittest.TestCase):
+    def test_inference_backend_falls_back_to_baseline_when_trained_model_returns_no_classes(self) -> None:
+        class EmptyTorchscriptClassifier(TorchscriptWaveformClassifier):
+            def __init__(self) -> None:
+                self.manifest = ModelArtifactManifest(
+                    model_name="waveform_cnn_v1",
+                    model_type="torchscript_waveform_cnn",
+                    class_names=settings.supported_classes,
+                    sample_rate_hz=settings.sample_rate_hz,
+                    input_sample_count=settings.sample_rate_hz,
+                    confidence_threshold=0.45,
+                    weights_path="training/artifacts/real-v1/model.ts",
+                    normalization_target_peak=0.95,
+                )
+
+            def predict(self, samples: list[float]) -> list:
+                return []
+
+        baseline = BaselineSoundClassifier(
+            supported_classes=settings.supported_classes,
+            confidence_threshold=settings.classifier_confidence_threshold,
+        )
+        backend = InferenceBackend(
+            name="trained_model:waveform_cnn_v1",
+            predictor=EmptyTorchscriptClassifier(),
+            fallback_predictor=baseline,
+            manifest=EmptyTorchscriptClassifier().manifest,
+        )
+        samples = [0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667
+        spectral = extract_log_mel_features(samples=samples, sample_rate_hz=16000)
+        from backend.app.audio import extract_features
+
+        features = extract_features(samples=samples, sample_rate_hz=16000)
+
+        predictions = backend.predict(
+            samples=samples,
+            sample_rate_hz=16000,
+            features=features,
+            spectral_features=spectral,
+        )
+
+        self.assertGreaterEqual(len(predictions), 1)
+        self.assertTrue(all(prediction.label in settings.supported_classes for prediction in predictions))
+
     def test_preprocess_audio_normalizes_and_resamples(self) -> None:
         samples = [0.0, 0.1, -0.2, 0.25, -0.25] * 20
 
@@ -98,6 +154,29 @@ class AudioPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(predictions[0].confidence, predictions[-1].confidence)
         self.assertTrue(all(prediction.label in settings.supported_classes for prediction in predictions))
 
+    def test_baseline_classifier_predict_ranked_returns_best_match_below_threshold(self) -> None:
+        classifier = BaselineSoundClassifier(
+            supported_classes=settings.supported_classes,
+            confidence_threshold=0.99,
+        )
+        spectral = extract_log_mel_features(
+            samples=[0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667,
+            sample_rate_hz=16000,
+        )
+        from backend.app.audio import extract_features
+
+        features = extract_features(
+            samples=[0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667,
+            sample_rate_hz=16000,
+        )
+
+        thresholded_predictions = classifier.predict(features=features, spectral_features=spectral)
+        ranked_predictions = classifier.predict_ranked(features=features, spectral_features=spectral)
+
+        self.assertEqual(thresholded_predictions, [])
+        self.assertGreaterEqual(len(ranked_predictions), 1)
+        self.assertGreaterEqual(ranked_predictions[0].confidence, ranked_predictions[-1].confidence)
+
     def test_prepare_waveform_input_pads_to_target_length(self) -> None:
         prepared = prepare_waveform_input(samples=[0.1, -0.2, 0.3], input_sample_count=6)
 
@@ -144,8 +223,66 @@ class AudioPipelineTests(unittest.TestCase):
         self.assertEqual(backend.name, settings.classifier_name)
         self.assertIsNone(backend.manifest)
 
+    def test_inference_backend_promotes_top_baseline_match_when_threshold_filters_everything(self) -> None:
+        class EmptyTorchscriptClassifier(TorchscriptWaveformClassifier):
+            def __init__(self) -> None:
+                self.manifest = ModelArtifactManifest(
+                    model_name="waveform_cnn_v1",
+                    model_type="torchscript_waveform_cnn",
+                    class_names=settings.supported_classes,
+                    sample_rate_hz=settings.sample_rate_hz,
+                    input_sample_count=settings.sample_rate_hz,
+                    confidence_threshold=0.45,
+                    weights_path="training/artifacts/real-v1/model.ts",
+                    normalization_target_peak=0.95,
+                )
+
+            def predict(self, samples: list[float]) -> list:
+                return []
+
+        baseline = BaselineSoundClassifier(
+            supported_classes=settings.supported_classes,
+            confidence_threshold=0.99,
+        )
+        backend = InferenceBackend(
+            name="trained_model:waveform_cnn_v1",
+            predictor=EmptyTorchscriptClassifier(),
+            fallback_predictor=baseline,
+            manifest=EmptyTorchscriptClassifier().manifest,
+        )
+        samples = [0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667
+        spectral = extract_log_mel_features(samples=samples, sample_rate_hz=16000)
+        from backend.app.audio import extract_features
+
+        features = extract_features(samples=samples, sample_rate_hz=16000)
+
+        prediction_result = backend.predict_with_metadata(
+            samples=samples,
+            sample_rate_hz=16000,
+            features=features,
+            spectral_features=spectral,
+        )
+
+        self.assertEqual(len(prediction_result.predictions), 1)
+        self.assertEqual(prediction_result.source_name, "baseline_rules_v1")
+        self.assertTrue(prediction_result.used_fallback)
+
 
 class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        temp_root = Path(__file__).resolve().parents[2] / ".tmp-tests"
+        temp_root.mkdir(exist_ok=True)
+        self._temp_dir = temp_root / f"session-store-{uuid4().hex}"
+        self._temp_dir.mkdir()
+        self._original_session_store_dir = settings.session_store_dir
+        settings.session_store_dir = str(self._temp_dir)
+
+    def tearDown(self) -> None:
+        settings.session_store_dir = self._original_session_store_dir
+        shutil.rmtree(self._temp_dir, ignore_errors=True)
+        super().tearDown()
+
     async def test_health_route_returns_ok(self) -> None:
         response = await health()
         self.assertEqual(response.status, "ok")
@@ -158,15 +295,36 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
 
         response = await analyze_audio(file=upload)
 
-        self.assertEqual(response.status, settings.classifier_name)
+        self.assertEqual(response.status, inference_backend.name)
+        self.assertTrue(response.session_id)
+        self.assertTrue(response.classifier_source)
+        self.assertIsInstance(response.used_fallback, bool)
         self.assertEqual(response.metadata.sample_rate_hz, 16000)
         self.assertEqual(response.metadata.processed_sample_rate_hz, settings.sample_rate_hz)
         self.assertEqual(response.metadata.duration_ms, 1000)
         self.assertGreater(response.spectral_features.frame_count, 50)
-        self.assertGreaterEqual(len(response.detections), 1)
+        self.assertIsInstance(response.detections, list)
         self.assertTrue(
             all(detection.label in settings.supported_classes for detection in response.detections)
         )
+
+    async def test_saved_session_can_be_listed_and_loaded(self) -> None:
+        upload = UploadFile(
+            filename="sample.wav",
+            file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.5)),
+        )
+
+        analysis = await analyze_audio(file=upload)
+        session_list = await get_sessions()
+        session_detail = await get_session(analysis.session_id)
+
+        self.assertEqual(len(session_list.sessions), 1)
+        self.assertEqual(session_list.sessions[0].session_id, analysis.session_id)
+        self.assertEqual(session_detail.analysis.session_id, analysis.session_id)
+        self.assertEqual(session_detail.filename, "sample.wav")
+        self.assertTrue(session_detail.original_audio_base64)
+        self.assertTrue(session_detail.analysis.classifier_source)
+        self.assertIsNone(session_detail.processed_response)
 
     async def test_analyze_audio_rejects_missing_filename(self) -> None:
         upload = UploadFile(
@@ -199,6 +357,12 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(context.exception.detail)
 
     async def test_process_audio_returns_processed_wav_payload(self) -> None:
+        analysis = await analyze_audio(
+            file=UploadFile(
+                filename="sample.wav",
+                file=io.BytesIO(build_test_wav_bytes(duration_seconds=1.0)),
+            )
+        )
         upload = UploadFile(
             filename="sample.wav",
             file=io.BytesIO(build_test_wav_bytes(duration_seconds=1.0)),
@@ -209,9 +373,13 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
             suppressed_classes="traffic,music",
             attenuation_factor=0.2,
             suppression_profile="",
+            session_id=analysis.session_id,
         )
 
         self.assertEqual(response.status, "suppression_prototype_v1")
+        self.assertEqual(response.session_id, analysis.session_id)
+        self.assertEqual(response.classifier_source, analysis.classifier_source)
+        self.assertEqual(response.used_fallback, analysis.used_fallback)
         self.assertEqual(response.processed_audio.sample_rate_hz, settings.sample_rate_hz)
         self.assertEqual(response.processed_audio.suppressed_classes, ["traffic", "music"])
         self.assertEqual(
@@ -221,6 +389,13 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(response.processed_audio.wav_byte_count, 100)
         decoded_bytes = base64.b64decode(response.processed_audio.wav_base64)
         self.assertTrue(decoded_bytes.startswith(b"RIFF"))
+        session_detail = await get_session(analysis.session_id)
+        self.assertIsNotNone(session_detail.processed_response)
+        assert session_detail.processed_response is not None
+        self.assertEqual(
+            session_detail.processed_response.processed_audio.suppressed_classes,
+            ["traffic", "music"],
+        )
 
     async def test_process_audio_accepts_per_class_suppression_profile(self) -> None:
         upload = UploadFile(

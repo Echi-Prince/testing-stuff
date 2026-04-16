@@ -34,6 +34,14 @@
         </p>
       </section>
 
+      <section class="panel">
+        <div class="section-head">
+          <h2>Recent Sessions</h2>
+          <p class="muted">Reload saved analysis and suppression previews from the backend.</p>
+        </div>
+        <div id="recent-sessions" class="session-list empty-state">No saved sessions yet.</div>
+      </section>
+
       <section class="results-grid">
         <article class="panel">
           <h2>Session</h2>
@@ -79,7 +87,7 @@
       <section class="panel">
         <div class="section-head">
           <h2>Detected Events</h2>
-          <p class="muted">Highest-confidence labels returned by the baseline classifier.</p>
+          <p id="detections-caption" class="muted">Highest-confidence labels returned by the active classifier backend.</p>
         </div>
         <div id="detections" class="detections empty-state">No detections yet.</div>
       </section>

@@ -4,6 +4,8 @@ const uploadForm = document.querySelector("#upload-form");
 const fileInput = document.querySelector("#file-input");
 const submitButton = document.querySelector("#submit-button");
 const statusBanner = document.querySelector("#status-banner");
+const recentSessions = document.querySelector("#recent-sessions");
+const detectionsCaption = document.querySelector("#detections-caption");
 const sessionSummary = document.querySelector("#session-summary");
 const metadataSummary = document.querySelector("#metadata-summary");
 const featureSummary = document.querySelector("#feature-summary");
@@ -20,12 +22,16 @@ let currentProcessedAudioUrl = "";
 let currentAudioElement = null;
 let currentProcessedAudioElement = null;
 let currentAnalysis = null;
+let currentSessionId = "";
 let activeDetectionIndex = -1;
 let currentWaveformPeaks = [];
 let currentSpectrogramFrames = [];
 let currentWaveformDurationMs = 0;
 let audioContext = null;
 let lastSuppressionProfile = loadSuppressionPreset();
+
+void checkBackendHealth();
+void refreshSessionList();
 
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -46,8 +52,10 @@ uploadForm.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error(payload.detail || "Analysis request failed.");
     await prepareAudioPreview(file);
     currentAnalysis = payload;
+    currentSessionId = payload.session_id;
     activeDetectionIndex = payload.detections.length ? 0 : -1;
     renderAnalysis(payload);
+    await refreshSessionList();
     setStatus(`Analysis complete for ${payload.filename}.`, false);
   } catch (error) {
     clearResults();
@@ -83,12 +91,17 @@ async function prepareAudioPreview(file) {
 }
 
 function renderAnalysis(payload) {
-  renderMetricList(sessionSummary, [["Status", payload.status], ["Filename", payload.filename], ["Detections", String(payload.detections.length)]]);
+  renderMetricList(sessionSummary, [["Status", payload.status], ["Source", payload.classifier_source], ["Fallback", payload.used_fallback ? "Yes" : "No"], ["Filename", payload.filename], ["Session", payload.session_id.slice(0, 8)], ["Detections", String(payload.detections.length)]]);
   renderMetricList(metadataSummary, [["Input Rate", `${payload.metadata.sample_rate_hz} Hz`], ["Processed Rate", `${payload.metadata.processed_sample_rate_hz} Hz`], ["Duration", `${payload.metadata.duration_ms} ms`], ["Processed Samples", String(payload.metadata.processed_sample_count)], ["Normalization Gain", payload.metadata.normalization_gain.toFixed(3)], ["Resampled", payload.metadata.was_resampled ? "Yes" : "No"]]);
   renderMetricList(featureSummary, [["RMS", payload.features.rms.toFixed(6)], ["Peak", payload.features.peak_amplitude.toFixed(6)], ["Zero Crossings", payload.features.zero_crossing_rate.toFixed(6)], ["Activity Ratio", payload.features.dominant_activity_ratio.toFixed(6)]]);
   renderMetricList(spectralSummary, [["Frames", String(payload.spectral_features.frame_count)], ["Mel Bins", String(payload.spectral_features.mel_bin_count)], ["Mean dB", payload.spectral_features.mean_db.toFixed(3)], ["Dynamic Range", payload.spectral_features.dynamic_range_db.toFixed(3)]]);
   renderPlayback(payload);
   renderInteractiveViews();
+  if (detectionsCaption) {
+    detectionsCaption.textContent = payload.used_fallback
+      ? `Highest-confidence labels returned by ${payload.classifier_source} after the trained model returned no classes.`
+      : `Highest-confidence labels returned by ${payload.classifier_source}.`;
+  }
 }
 
 function renderPlayback(payload) {
@@ -162,6 +175,7 @@ function renderPlayback(payload) {
       const suppressionProfile = getSuppressionProfile();
       saveSuppressionPreset(suppressionProfile);
       renderProcessedAudio(await requestProcessedAudio({ file: currentFile, suppressionProfile }));
+      await refreshSessionList();
       setStatus("Suppression preview ready.", false);
     } catch (error) {
       renderProcessedAudio(null);
@@ -244,6 +258,7 @@ async function requestProcessedAudio({ file, suppressionProfile }) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("suppression_profile", JSON.stringify(suppressionProfile));
+  if (currentSessionId) formData.append("session_id", currentSessionId);
   const response = await fetch(`${API_BASE_URL}/process`, { method: "POST", body: formData });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.detail || "Suppression processing failed.");
@@ -263,8 +278,9 @@ function renderProcessedAudio(payload) {
   }
   const blob = new Blob([decodeBase64(payload.processed_audio.wav_base64)], { type: "audio/wav" });
   currentProcessedAudioUrl = URL.createObjectURL(blob);
+  currentSessionId = payload.session_id || currentSessionId;
   summary.className = "processed-player";
-  summary.innerHTML = `<strong>Processed Audio Preview</strong><p class="muted">Suppressed classes: ${escapeHtml(payload.processed_audio.suppressed_classes.join(", ") || "none")}</p><p class="muted">Profile: ${escapeHtml(formatSuppressionProfile(payload.processed_audio.class_attenuation_factors))}</p>`;
+  summary.innerHTML = `<strong>Processed Audio Preview</strong><p class="muted">Detection source: ${escapeHtml(payload.classifier_source)}${payload.used_fallback ? " (baseline fallback)" : ""}</p><p class="muted">Suppressed classes: ${escapeHtml(payload.processed_audio.suppressed_classes.join(", ") || "none")}</p><p class="muted">Profile: ${escapeHtml(formatSuppressionProfile(payload.processed_audio.class_attenuation_factors))}</p>`;
   shell.className = "processed-player";
   shell.innerHTML = `<audio id="processed-audio-player" controls preload="metadata" src="${escapeHtml(currentProcessedAudioUrl)}"></audio><div class="compare-actions"><button type="button" id="sync-processed">Match Original Position</button><button type="button" id="play-both" class="subtle-button">Play Both</button></div>`;
   currentProcessedAudioElement = shell.querySelector("#processed-audio-player");
@@ -551,6 +567,7 @@ function syncProcessedAudioPlaybackState(shouldPlay) {
 function clearResults() {
   currentAnalysis = null;
   currentFile = null;
+  currentSessionId = "";
   activeDetectionIndex = -1;
   currentWaveformPeaks = [];
   currentSpectrogramFrames = [];
@@ -574,6 +591,73 @@ function clearResults() {
   setEmpty(playbackPanel, "playback-panel", "Upload a WAV file to enable playback controls.");
   setEmpty(timelineContainer, "timeline", "No timeline yet.");
   setEmpty(selectionSummary, "selection-summary", "No event selected.");
+  if (detectionsCaption) {
+    detectionsCaption.textContent = "Highest-confidence labels returned by the active classifier backend.";
+  }
+}
+
+async function refreshSessionList() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/sessions`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to load saved sessions.");
+    renderSessionList(payload.sessions || []);
+  } catch {
+    setEmpty(recentSessions, "session-list", "Saved sessions are unavailable.");
+  }
+}
+
+async function checkBackendHealth() {
+  try {
+    const response = await fetch(`${API_BASE_URL}/health`);
+    const payload = await response.json();
+    if (!response.ok || payload.status !== "ok") {
+      throw new Error("Backend health check failed.");
+    }
+    setStatus("Frontend ready. Backend connection is healthy.", false);
+  } catch {
+    setStatus("Frontend loaded, but the backend is not reachable at http://127.0.0.1:8000. Start the backend or run start-dev.cmd.", true);
+  }
+}
+
+function renderSessionList(sessions) {
+  if (!sessions.length) return void setEmpty(recentSessions, "session-list", "No saved sessions yet.");
+  recentSessions.className = "session-list";
+  recentSessions.innerHTML = sessions.map((session) => `
+    <article class="session-item">
+      <div>
+        <strong>${escapeHtml(session.filename)}</strong>
+        <p>${escapeHtml(session.status)} - ${session.detection_count} detections - ${session.has_processed_audio ? "processed preview saved" : "analysis only"}</p>
+      </div>
+      <button type="button" class="subtle-button" data-session-id="${escapeHtml(session.session_id)}">Load Session</button>
+    </article>`).join("");
+  recentSessions.querySelectorAll("[data-session-id]").forEach((button) => {
+    button.addEventListener("click", () => { void loadSavedSession(button.dataset.sessionId); });
+  });
+}
+
+async function loadSavedSession(sessionId) {
+  try {
+    setStatus("Loading saved session...", false);
+    const response = await fetch(`${API_BASE_URL}/sessions/${encodeURIComponent(sessionId)}`);
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to load session.");
+    currentSessionId = payload.session_id;
+    currentFile = buildFileFromBase64(payload.original_audio_base64, payload.filename);
+    await prepareAudioPreview(currentFile);
+    currentAnalysis = payload.analysis;
+    activeDetectionIndex = payload.analysis.detections.length ? 0 : -1;
+    renderAnalysis(payload.analysis);
+    renderProcessedAudio(payload.processed_response);
+    setStatus(`Loaded saved session for ${payload.filename}.`, false);
+  } catch (error) {
+    setStatus(error.message || "Failed to load session.", true);
+  }
+}
+
+function buildFileFromBase64(base64Value, filename) {
+  const bytes = decodeBase64(base64Value);
+  return new File([bytes], filename, { type: "audio/wav" });
 }
 
 function settingsDefaultAttenuation() { return "0.20"; }

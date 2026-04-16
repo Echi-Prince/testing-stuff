@@ -21,6 +21,22 @@ class BaselineSoundClassifier:
         features: ComputedFeatures,
         spectral_features: SpectralFeatures,
     ) -> list[ClassPrediction]:
+        ranked_predictions = self.predict_ranked(
+            features=features,
+            spectral_features=spectral_features,
+        )
+        predictions = [
+            prediction
+            for prediction in ranked_predictions
+            if prediction.confidence >= self.confidence_threshold
+        ]
+        return predictions[:3]
+
+    def predict_ranked(
+        self,
+        features: ComputedFeatures,
+        spectral_features: SpectralFeatures,
+    ) -> list[ClassPrediction]:
         scorers = {
             "speech": self._score_speech,
             "keyboard": self._score_keyboard,
@@ -37,8 +53,7 @@ class BaselineSoundClassifier:
             if scorer is None:
                 continue
             confidence = round(scorer(features, spectral_features), 3)
-            if confidence >= self.confidence_threshold:
-                predictions.append(ClassPrediction(label=label, confidence=confidence))
+            predictions.append(ClassPrediction(label=label, confidence=confidence))
 
         predictions.sort(key=lambda item: item.confidence, reverse=True)
         return predictions[:3]
@@ -61,17 +76,20 @@ class BaselineSoundClassifier:
     def _score_keyboard(
         self, features: ComputedFeatures, spectral_features: SpectralFeatures
     ) -> float:
-        score = 0.04
-        score += self._scale(features.zero_crossing_rate, 0.08, 0.28, 0.0, 0.26)
+        crest_factor = self._safe_ratio(features.peak_amplitude, max(features.rms, 1e-6))
+        score = 0.08
+        score += self._scale(features.zero_crossing_rate, 0.08, 0.2, 0.0, 0.22)
         score += self._scale(features.peak_amplitude, 0.45, 1.0, 0.0, 0.12)
-        score += self._scale(features.dominant_activity_ratio, 0.01, 0.22, 0.1, 0.0)
-        score += self._band_preference(
-            spectral_features.high_band_mean_db,
-            spectral_features.mid_band_mean_db,
-            spectral_features.low_band_mean_db,
-            weight=0.26,
+        score += self._scale(features.dominant_activity_ratio, 0.05, 0.6, 0.08, 0.0)
+        score += self._scale(spectral_features.dynamic_range_db, 18.0, 90.0, 0.0, 0.2)
+        score += self._scale(crest_factor, 6.0, 28.0, 0.0, 0.24)
+        score += self._scale(
+            spectral_features.mid_band_mean_db - spectral_features.high_band_mean_db,
+            -8.0,
+            8.0,
+            0.0,
+            0.12,
         )
-        score += self._scale(spectral_features.dynamic_range_db, 18.0, 70.0, 0.0, 0.18)
         return self._clamp(score)
 
     def _score_dog_bark(
@@ -88,6 +106,7 @@ class BaselineSoundClassifier:
             spectral_features.low_band_mean_db,
             weight=0.16,
         )
+        score += self._scale(features.rms, 0.04, 0.2, 0.0, 0.12)
         return self._clamp(score)
 
     def _score_traffic(
@@ -120,6 +139,7 @@ class BaselineSoundClassifier:
             weight=0.22,
         )
         score += self._scale(spectral_features.max_db, 10.0, 45.0, 0.0, 0.12)
+        score += self._scale(features.rms, 0.05, 0.25, 0.0, 0.1)
         return self._clamp(score)
 
     def _score_vacuum(
@@ -184,6 +204,11 @@ class BaselineSoundClassifier:
     def _clamp(self, value: float) -> float:
         return min(0.99, max(0.0, value))
 
+    def _safe_ratio(self, numerator: float, denominator: float) -> float:
+        if denominator <= 0.0:
+            return 0.0
+        return numerator / denominator
+
 
 def build_classifier_detections(
     classifier: object,
@@ -192,15 +217,29 @@ def build_classifier_detections(
     features: ComputedFeatures,
     spectral_features: SpectralFeatures,
     duration_ms: int,
-) -> list[dict[str, float | int | str]]:
-    predictions = classifier.predict(
-        samples=samples,
-        sample_rate_hz=sample_rate_hz,
-        features=features,
-        spectral_features=spectral_features,
-    )
+) -> tuple[list[dict[str, float | int | str]], str, bool]:
+    source_name = getattr(classifier, "name", classifier.__class__.__name__)
+    used_fallback = False
+    if hasattr(classifier, "predict_with_metadata"):
+        prediction_result = classifier.predict_with_metadata(
+            samples=samples,
+            sample_rate_hz=sample_rate_hz,
+            features=features,
+            spectral_features=spectral_features,
+        )
+        predictions = prediction_result.predictions
+        source_name = prediction_result.source_name
+        used_fallback = prediction_result.used_fallback
+    else:
+        predictions = classifier.predict(
+            samples=samples,
+            sample_rate_hz=sample_rate_hz,
+            features=features,
+            spectral_features=spectral_features,
+        )
     end_ms = max(duration_ms, 1)
-    return [
+    return (
+        [
         {
             "label": prediction.label,
             "confidence": prediction.confidence,
@@ -208,4 +247,7 @@ def build_classifier_detections(
             "end_ms": end_ms,
         }
         for prediction in predictions
-    ]
+        ],
+        source_name,
+        used_fallback,
+    )
