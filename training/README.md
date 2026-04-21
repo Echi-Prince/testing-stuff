@@ -19,6 +19,8 @@ What it contains
    - Expected folder layout for real recordings.
 8. `requirements.txt`
    - Training-only dependencies.
+9. Browser-assisted collection flow
+   - The frontend can now record microphone audio and save labeled WAV clips into `training/real_recordings/` through the backend `POST /recordings` endpoint.
 
 Dataset manifest format
 Each line is one JSON object:
@@ -53,6 +55,7 @@ python -m training.train --manifest training\synthetic_data\manifest.jsonl --out
 
 Real data flow
 1. Place WAV recordings under `training/real_recordings/`.
+   - You can now do this either manually or by recording/labelling clips from the dashboard UI.
 2. Build a manifest:
 
 ```powershell
@@ -76,3 +79,4 @@ Notes
 2. The live backend still falls back to the rule-based classifier until a valid TorchScript artifact is configured in `backend/app/config.py`.
 3. The synthetic generator is only for pipeline bring-up and local experimentation. Real detections will need real labeled recordings.
 4. `build_real_manifest.py` accepts either `real_recordings/<label>/*.wav` or `real_recordings/<split>/<label>/*.wav` layouts.
+5. The recording ingest route writes browser-captured WAV files into that same layout so manifest generation does not need a separate conversion step.

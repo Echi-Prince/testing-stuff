@@ -15,7 +15,11 @@ from fastapi import HTTPException
 from fastapi import UploadFile
 
 from backend.app.audio import extract_log_mel_features, preprocess_audio
-from backend.app.classifier import BaselineSoundClassifier
+from backend.app.classifier import (
+    BaselineSoundClassifier,
+    ClassPrediction,
+    apply_prediction_thresholds,
+)
 from backend.app.config import settings
 from backend.app.model_loader import (
     InferenceBackend,
@@ -26,13 +30,17 @@ from backend.app.model_loader import (
     prepare_waveform_input,
 )
 from backend.app.main import (
+    _filter_merged_detections,
     analyze_audio,
+    build_windowed_detections,
     get_session,
     get_sessions,
     health,
     inference_backend,
+    save_recording,
     process_audio,
 )
+from backend.app.model_loader import PredictionResult
 
 
 def build_test_wav_bytes(
@@ -62,6 +70,21 @@ def build_test_wav_bytes(
 
 
 class AudioPipelineTests(unittest.TestCase):
+    def test_apply_prediction_thresholds_uses_per_class_overrides(self) -> None:
+        predictions = [
+            ClassPrediction(label="speech", confidence=0.62),
+            ClassPrediction(label="keyboard", confidence=0.41),
+            ClassPrediction(label="music", confidence=0.49),
+        ]
+
+        filtered_predictions = apply_prediction_thresholds(
+            predictions=predictions,
+            default_threshold=0.45,
+            class_confidence_thresholds={"speech": 0.7, "keyboard": 0.4},
+        )
+
+        self.assertEqual([prediction.label for prediction in filtered_predictions], ["keyboard", "music"])
+
     def test_inference_backend_falls_back_to_baseline_when_trained_model_returns_no_classes(self) -> None:
         class EmptyTorchscriptClassifier(TorchscriptWaveformClassifier):
             def __init__(self) -> None:
@@ -79,6 +102,9 @@ class AudioPipelineTests(unittest.TestCase):
             def predict(self, samples: list[float]) -> list:
                 return []
 
+            def predict_ranked(self, samples: list[float]) -> list:
+                return []
+
         baseline = BaselineSoundClassifier(
             supported_classes=settings.supported_classes,
             confidence_threshold=settings.classifier_confidence_threshold,
@@ -88,6 +114,10 @@ class AudioPipelineTests(unittest.TestCase):
             predictor=EmptyTorchscriptClassifier(),
             fallback_predictor=baseline,
             manifest=EmptyTorchscriptClassifier().manifest,
+            confidence_threshold=0.99,
+            class_confidence_thresholds={
+                label: 0.99 for label in settings.supported_classes
+            },
         )
         samples = [0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667
         spectral = extract_log_mel_features(samples=samples, sample_rate_hz=16000)
@@ -216,6 +246,7 @@ class AudioPipelineTests(unittest.TestCase):
         backend = build_inference_backend(
             supported_classes=settings.supported_classes,
             confidence_threshold=settings.classifier_confidence_threshold,
+            class_confidence_thresholds=settings.class_confidence_thresholds,
             baseline_name=settings.classifier_name,
             manifest_path="",
         )
@@ -240,6 +271,9 @@ class AudioPipelineTests(unittest.TestCase):
             def predict(self, samples: list[float]) -> list:
                 return []
 
+            def predict_ranked(self, samples: list[float]) -> list:
+                return []
+
         baseline = BaselineSoundClassifier(
             supported_classes=settings.supported_classes,
             confidence_threshold=0.99,
@@ -249,6 +283,10 @@ class AudioPipelineTests(unittest.TestCase):
             predictor=EmptyTorchscriptClassifier(),
             fallback_predictor=baseline,
             manifest=EmptyTorchscriptClassifier().manifest,
+            confidence_threshold=0.99,
+            class_confidence_thresholds={
+                label: 0.99 for label in settings.supported_classes
+            },
         )
         samples = [0.0, 0.3, -0.1, 0.5, -0.4, 0.2] * 2667
         spectral = extract_log_mel_features(samples=samples, sample_rate_hz=16000)
@@ -267,6 +305,86 @@ class AudioPipelineTests(unittest.TestCase):
         self.assertEqual(prediction_result.source_name, "baseline_rules_v1")
         self.assertTrue(prediction_result.used_fallback)
 
+    def test_build_windowed_detections_merges_overlapping_chunk_predictions(self) -> None:
+        class FakeWindowClassifier:
+            def __init__(self) -> None:
+                self._call_index = 0
+                self._responses = [
+                    PredictionResult(
+                        predictions=[ClassPrediction(label="keyboard", confidence=0.82)],
+                        source_name="trained_model:waveform_cnn_v1",
+                        used_fallback=False,
+                    ),
+                    PredictionResult(
+                        predictions=[ClassPrediction(label="keyboard", confidence=0.75)],
+                        source_name="trained_model:waveform_cnn_v1",
+                        used_fallback=False,
+                    ),
+                    PredictionResult(
+                        predictions=[ClassPrediction(label="speech", confidence=0.64)],
+                        source_name="baseline_rules_v1",
+                        used_fallback=True,
+                    ),
+                ]
+
+            def predict_with_metadata(self, **_: object) -> PredictionResult:
+                response = self._responses[self._call_index]
+                self._call_index += 1
+                return response
+
+        detections, classifier_sources, used_fallback = build_windowed_detections(
+            classifier=FakeWindowClassifier(),
+            samples=[0.0] * 32000,
+            sample_rate_hz=16000,
+            chunk_duration_ms=1000,
+            chunk_overlap_ms=500,
+        )
+
+        self.assertEqual(
+            detections,
+            [
+                {
+                    "label": "keyboard",
+                    "confidence": 0.82,
+                    "start_ms": 0,
+                    "end_ms": 1500,
+                },
+            ],
+        )
+        self.assertEqual(
+            classifier_sources,
+            ["baseline_rules_v1", "trained_model:waveform_cnn_v1"],
+        )
+        self.assertTrue(used_fallback)
+
+    def test_filter_merged_detections_keeps_only_dominant_fallback_label(self) -> None:
+        detections = [
+            {"label": "keyboard", "confidence": 0.84, "start_ms": 0, "end_ms": 4644},
+            {"label": "speech", "confidence": 0.71, "start_ms": 500, "end_ms": 4644},
+            {"label": "dog_bark", "confidence": 0.69, "start_ms": 0, "end_ms": 1500},
+        ]
+
+        filtered_detections = _filter_merged_detections(
+            detections=detections,
+            top_window_labels=[
+                "keyboard",
+                "keyboard",
+                "speech",
+                "speech",
+                "keyboard",
+                "keyboard",
+                "keyboard",
+                "keyboard",
+                "keyboard",
+            ],
+            used_fallback=True,
+        )
+
+        self.assertEqual(
+            filtered_detections,
+            [{"label": "keyboard", "confidence": 0.84, "start_ms": 0, "end_ms": 4644}],
+        )
+
 
 class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -275,12 +393,18 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
         temp_root.mkdir(exist_ok=True)
         self._temp_dir = temp_root / f"session-store-{uuid4().hex}"
         self._temp_dir.mkdir()
+        self._recordings_dir = temp_root / f"real-recordings-{uuid4().hex}"
+        self._recordings_dir.mkdir()
         self._original_session_store_dir = settings.session_store_dir
+        self._original_real_recordings_dir = settings.real_recordings_dir
         settings.session_store_dir = str(self._temp_dir)
+        settings.real_recordings_dir = str(self._recordings_dir)
 
     def tearDown(self) -> None:
         settings.session_store_dir = self._original_session_store_dir
+        settings.real_recordings_dir = self._original_real_recordings_dir
         shutil.rmtree(self._temp_dir, ignore_errors=True)
+        shutil.rmtree(self._recordings_dir, ignore_errors=True)
         super().tearDown()
 
     async def test_health_route_returns_ok(self) -> None:
@@ -446,6 +570,41 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(context.exception.status_code, 400)
         self.assertIn("suppression_profile", context.exception.detail.lower())
+
+    async def test_save_recording_persists_wav_into_real_recordings_layout(self) -> None:
+        response = await save_recording(
+            file=UploadFile(
+                filename="recorded.wav",
+                file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.25)),
+            ),
+            label="speech",
+            split="train",
+            source_name="browser mic",
+        )
+
+        self.assertEqual(response.label, "speech")
+        self.assertEqual(response.split, "train")
+        self.assertGreater(response.byte_count, 100)
+        self.assertEqual(response.sample_rate_hz, 16000)
+        self.assertEqual(response.duration_ms, 250)
+        saved_path = Path(settings.real_recordings_dir) / "train" / "speech" / response.filename
+        self.assertTrue(saved_path.exists())
+        self.assertTrue(response.relative_path.endswith(f"train/speech/{response.filename}"))
+
+    async def test_save_recording_rejects_unsupported_label(self) -> None:
+        with self.assertRaises(HTTPException) as context:
+            await save_recording(
+                file=UploadFile(
+                    filename="recorded.wav",
+                    file=io.BytesIO(build_test_wav_bytes(duration_seconds=0.25)),
+                ),
+                label="car_horn",
+                split="",
+                source_name="browser",
+            )
+
+        self.assertEqual(context.exception.status_code, 400)
+        self.assertIn("supported classes", context.exception.detail.lower())
 
 
 if __name__ == "__main__":

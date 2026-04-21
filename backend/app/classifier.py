@@ -12,9 +12,15 @@ class ClassPrediction:
 
 
 class BaselineSoundClassifier:
-    def __init__(self, supported_classes: list[str], confidence_threshold: float = 0.45):
+    def __init__(
+        self,
+        supported_classes: list[str],
+        confidence_threshold: float = 0.45,
+        class_confidence_thresholds: dict[str, float] | None = None,
+    ):
         self.supported_classes = supported_classes
         self.confidence_threshold = confidence_threshold
+        self.class_confidence_thresholds = class_confidence_thresholds or {}
 
     def predict(
         self,
@@ -25,12 +31,11 @@ class BaselineSoundClassifier:
             features=features,
             spectral_features=spectral_features,
         )
-        predictions = [
-            prediction
-            for prediction in ranked_predictions
-            if prediction.confidence >= self.confidence_threshold
-        ]
-        return predictions[:3]
+        return apply_prediction_thresholds(
+            predictions=ranked_predictions,
+            default_threshold=self.confidence_threshold,
+            class_confidence_thresholds=self.class_confidence_thresholds,
+        )
 
     def predict_ranked(
         self,
@@ -61,15 +66,22 @@ class BaselineSoundClassifier:
     def _score_speech(
         self, features: ComputedFeatures, spectral_features: SpectralFeatures
     ) -> float:
-        score = 0.15
+        score = 0.18
         score += self._scale(features.dominant_activity_ratio, 0.18, 0.9, 0.0, 0.28)
-        score += self._scale(features.zero_crossing_rate, 0.035, 0.14, 0.0, 0.25)
-        score += self._scale(features.rms, 0.015, 0.22, 0.0, 0.14)
+        score += self._scale(features.zero_crossing_rate, 0.035, 0.18, 0.0, 0.22)
+        score += self._scale(features.rms, 0.02, 0.2, 0.0, 0.18)
         score += self._band_preference(
             spectral_features.mid_band_mean_db,
             spectral_features.low_band_mean_db,
             spectral_features.high_band_mean_db,
-            weight=0.18,
+            weight=0.22,
+        )
+        score += self._scale(
+            spectral_features.mid_band_mean_db - spectral_features.high_band_mean_db,
+            2.0,
+            14.0,
+            0.0,
+            0.14,
         )
         return self._clamp(score)
 
@@ -107,6 +119,8 @@ class BaselineSoundClassifier:
             weight=0.16,
         )
         score += self._scale(features.rms, 0.04, 0.2, 0.0, 0.12)
+        score -= self._scale(features.dominant_activity_ratio, 0.35, 0.75, 0.0, 0.18)
+        score -= self._scale(features.rms, 0.1, 0.22, 0.0, 0.14)
         return self._clamp(score)
 
     def _score_traffic(
@@ -140,6 +154,13 @@ class BaselineSoundClassifier:
         )
         score += self._scale(spectral_features.max_db, 10.0, 45.0, 0.0, 0.12)
         score += self._scale(features.rms, 0.05, 0.25, 0.0, 0.1)
+        score -= self._scale(
+            spectral_features.mid_band_mean_db - spectral_features.high_band_mean_db,
+            4.0,
+            16.0,
+            0.0,
+            0.14,
+        )
         return self._clamp(score)
 
     def _score_vacuum(
@@ -208,6 +229,22 @@ class BaselineSoundClassifier:
         if denominator <= 0.0:
             return 0.0
         return numerator / denominator
+
+
+def apply_prediction_thresholds(
+    *,
+    predictions: list[ClassPrediction],
+    default_threshold: float,
+    class_confidence_thresholds: dict[str, float] | None = None,
+    max_results: int = 3,
+) -> list[ClassPrediction]:
+    threshold_lookup = class_confidence_thresholds or {}
+    filtered_predictions = [
+        prediction
+        for prediction in predictions
+        if prediction.confidence >= threshold_lookup.get(prediction.label, default_threshold)
+    ]
+    return filtered_predictions[:max_results]
 
 
 def build_classifier_detections(

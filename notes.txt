@@ -1,6 +1,6 @@
 Project Notes
 
-Updated: 2026-04-16
+Updated: 2026-04-21
 
 Current backend state
 1. `POST /analyze` and `POST /process` are working routes in the FastAPI app.
@@ -12,10 +12,11 @@ Current backend state
    - the trained artifact fails to load
    - the trained artifact returns no detections for a clip
 7. The heuristic baseline was retuned so the current keyboard sample set ranks `keyboard` ahead of the old false-positive classes.
+8. The backend now exposes `POST /recordings` so browser-captured WAV files can be validated and saved directly into `training/real_recordings/` with label and optional split metadata.
 
 Current frontend state
-1. The dashboard supports WAV upload, analysis summaries, detections, playback, waveform preview, spectrogram preview, suppression preview controls, a recent-session reload panel, and detection-source display for fallback transparency.
-2. A frontend startup bug was fixed by restoring missing helper functions in `frontend/app.js`.
+1. The dashboard supports WAV upload, browser microphone recording, analysis summaries, detections, playback, waveform preview, spectrogram preview, suppression preview controls, a recent-session reload panel, training-set save controls, and detection-source display for fallback transparency.
+2. Recorded browser clips are converted to WAV client-side so they can go through the same analyze and suppression routes as uploaded files.
 3. Local launch is now simpler through root-level scripts:
    - `start-backend.cmd`
    - `start-frontend.cmd`
@@ -28,6 +29,7 @@ Training pipeline state
    - `manifest.json`
 3. `training/build_real_manifest.py` converts real labeled WAV folders into a JSONL training manifest.
 4. Real recordings should be placed under `training/real_recordings/` following the layout documented in `training/real_recordings/README.md`.
+5. The browser recording flow now provides a direct way to collect and label those WAV files from the site itself.
 
 Main limitation
 1. The project still needs more real labeled WAV recordings per class plus threshold tuning before the trained classifier will produce reliably useful detections without leaning on the heuristic fallback.

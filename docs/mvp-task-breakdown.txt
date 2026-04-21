@@ -1,26 +1,17 @@
 MVP Task Breakdown
 
-Backend
-1. Replace stub file handling with actual audio decoding.
-2. Add waveform resampling and normalization.
-3. Generate log-mel spectrogram features.
-4. Integrate a baseline multi-label classifier.
-5. Return real event spans instead of placeholder detections.
+Completed Core Backend
+1. Real WAV decoding, preprocessing, feature extraction, windowed detection merging, and session persistence are implemented.
+2. The backend now exposes `GET /health`, `GET /config`, `POST /analyze`, `POST /process`, `GET /sessions`, `GET /sessions/{session_id}`, and `POST /recordings`.
+3. Prototype suppression and training-recording ingest are both available through the API.
 
-Frontend
-1. Build an upload view.
-2. Show analysis state and errors.
-3. Render detections on a timeline.
-4. Add class-level suppression toggles.
+Completed Core Frontend
+1. The dashboard supports file upload, browser microphone recording, analysis state, timeline review, waveform/spectrogram previews, and suppression controls.
+2. Saved sessions can be reloaded from the backend.
+3. Recorded microphone clips can be labeled and saved into the training dataset layout.
 
-Audio Processing
-1. Define the feature extraction pipeline.
-2. Choose a first model checkpoint or training baseline.
-3. Add offline suppression for one target sound class.
-4. Export processed audio for comparison.
-
-Quality Gates
-1. Backend starts locally with no errors.
-2. Analyze endpoint accepts a file and returns valid JSON.
-3. Config endpoint matches the supported class list.
-4. Repository structure is ready for model integration.
+Current Remaining Work
+1. Collect more real labeled recordings per supported class.
+2. Retrain and calibrate thresholds so the trained model replaces the heuristic fallback more often.
+3. Improve suppression quality beyond simple span attenuation.
+4. Add broader integration coverage for frontend and end-to-end flows.

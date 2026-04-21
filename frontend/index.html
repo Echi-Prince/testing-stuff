@@ -34,6 +34,54 @@
         </p>
       </section>
 
+      <section class="panel recorder-panel">
+        <div class="section-head">
+          <div>
+            <h2>Record Audio</h2>
+            <p class="muted">Capture from the browser mic, analyze it, and optionally save labeled WAV clips into the training dataset.</p>
+          </div>
+        </div>
+        <div class="recording-grid">
+          <div class="recording-actions">
+            <div class="button-row">
+              <button id="record-start-button" type="button">Start Recording</button>
+              <button id="record-stop-button" type="button" class="subtle-button" disabled>Stop Recording</button>
+              <button id="record-analyze-button" type="button" class="subtle-button" disabled>Analyze Recording</button>
+            </div>
+            <p id="recording-status" class="status-banner" aria-live="polite">Microphone idle.</p>
+            <div id="recording-preview" class="processed-player empty-state">Record a clip to preview it here.</div>
+          </div>
+          <form id="recording-save-form" class="recording-save-form">
+            <label>
+              <span>Training Label</span>
+              <select id="recording-label" required>
+                <option value="speech">speech</option>
+                <option value="keyboard">keyboard</option>
+                <option value="dog_bark">dog_bark</option>
+                <option value="traffic">traffic</option>
+                <option value="siren">siren</option>
+                <option value="vacuum">vacuum</option>
+                <option value="music">music</option>
+              </select>
+            </label>
+            <label>
+              <span>Dataset Split</span>
+              <select id="recording-split">
+                <option value="">unspecified</option>
+                <option value="train">train</option>
+                <option value="val">val</option>
+                <option value="test">test</option>
+              </select>
+            </label>
+            <label>
+              <span>Source Name</span>
+              <input id="recording-source-name" type="text" value="browser-mic" maxlength="40" />
+            </label>
+            <button id="record-save-button" type="submit" disabled>Save To Training Set</button>
+          </form>
+        </div>
+      </section>
+
       <section class="panel">
         <div class="section-head">
           <h2>Recent Sessions</h2>

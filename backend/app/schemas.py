@@ -84,6 +84,18 @@ class ProcessResponse(BaseModel):
     processed_audio: ProcessedAudio
 
 
+class SavedRecordingResponse(BaseModel):
+    recording_id: str
+    label: str
+    split: str
+    filename: str
+    relative_path: str
+    byte_count: int
+    duration_ms: int
+    sample_rate_hz: int
+    message: str
+
+
 class SessionListItem(BaseModel):
     session_id: str
     filename: str

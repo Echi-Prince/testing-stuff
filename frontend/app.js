@@ -4,6 +4,16 @@ const uploadForm = document.querySelector("#upload-form");
 const fileInput = document.querySelector("#file-input");
 const submitButton = document.querySelector("#submit-button");
 const statusBanner = document.querySelector("#status-banner");
+const recordStartButton = document.querySelector("#record-start-button");
+const recordStopButton = document.querySelector("#record-stop-button");
+const recordAnalyzeButton = document.querySelector("#record-analyze-button");
+const recordSaveButton = document.querySelector("#record-save-button");
+const recordingStatus = document.querySelector("#recording-status");
+const recordingPreview = document.querySelector("#recording-preview");
+const recordingSaveForm = document.querySelector("#recording-save-form");
+const recordingLabelInput = document.querySelector("#recording-label");
+const recordingSplitInput = document.querySelector("#recording-split");
+const recordingSourceNameInput = document.querySelector("#recording-source-name");
 const recentSessions = document.querySelector("#recent-sessions");
 const detectionsCaption = document.querySelector("#detections-caption");
 const sessionSummary = document.querySelector("#session-summary");
@@ -29,19 +39,74 @@ let currentSpectrogramFrames = [];
 let currentWaveformDurationMs = 0;
 let audioContext = null;
 let lastSuppressionProfile = loadSuppressionPreset();
+let suppressOriginalPlaybackSync = false;
+let suppressProcessedPlaybackSync = false;
+let mediaRecorder = null;
+let recordingStream = null;
+let recordingChunks = [];
+let currentRecordingBlob = null;
+let currentRecordedFile = null;
+let currentRecordingUrl = "";
+let isRecording = false;
 
 void checkBackendHealth();
 void refreshSessionList();
 
 uploadForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const file = fileInput.files?.[0];
+  await analyzeCurrentFile();
+});
+
+recordStartButton?.addEventListener("click", () => {
+  void startBrowserRecording();
+});
+
+recordStopButton?.addEventListener("click", () => {
+  stopBrowserRecording();
+});
+
+recordAnalyzeButton?.addEventListener("click", () => {
+  if (!currentFile) {
+    setStatus("Record audio before analysis.", true);
+    return;
+  }
+  void analyzeCurrentFile();
+});
+
+recordingSaveForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  void saveCurrentRecordingToTrainingSet();
+});
+
+fileInput?.addEventListener("change", () => {
+  if (fileInput.files?.[0]) {
+    currentFile = fileInput.files[0];
+    currentRecordedFile = null;
+    currentRecordingBlob = null;
+    if (recordingPreview) {
+      setEmpty(recordingPreview, "processed-player", "Record a clip to preview it here.");
+    }
+    setRecordingStatus("Microphone idle.", false);
+  }
+  updateRecordingUiState();
+});
+
+window.addEventListener("resize", () => {
+  if (currentAnalysis) {
+    drawWaveform(getCurrentPlaybackMs());
+    drawSpectrogram(getCurrentPlaybackMs());
+  }
+});
+
+async function analyzeCurrentFile() {
+  const file = currentFile || fileInput.files?.[0];
   if (!file) {
-    setStatus("Choose a WAV file before running analysis.", true);
+    setStatus("Choose a WAV file or record audio before running analysis.", true);
     return;
   }
 
   submitButton.disabled = true;
+  recordAnalyzeButton.disabled = true;
   setStatus(`Uploading ${file.name}...`, false);
   try {
     currentFile = file;
@@ -59,18 +124,13 @@ uploadForm.addEventListener("submit", async (event) => {
     setStatus(`Analysis complete for ${payload.filename}.`, false);
   } catch (error) {
     clearResults();
+    currentFile = file;
     setStatus(error.message || "Unexpected error during analysis.", true);
   } finally {
     submitButton.disabled = false;
+    updateRecordingUiState();
   }
-});
-
-window.addEventListener("resize", () => {
-  if (currentAnalysis) {
-    drawWaveform(getCurrentPlaybackMs());
-    drawSpectrogram(getCurrentPlaybackMs());
-  }
-});
+}
 
 async function prepareAudioPreview(file) {
   if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
@@ -88,6 +148,175 @@ async function prepareAudioPreview(file) {
     currentWaveformPeaks = [];
     currentSpectrogramFrames = [];
   }
+}
+
+async function startBrowserRecording() {
+  if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+    setRecordingStatus("This browser does not support microphone recording.", true);
+    return;
+  }
+
+  try {
+    if (currentRecordingUrl) {
+      URL.revokeObjectURL(currentRecordingUrl);
+      currentRecordingUrl = "";
+    }
+    currentRecordingBlob = null;
+    recordingChunks = [];
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(recordingStream);
+    mediaRecorder.addEventListener("dataavailable", (event) => {
+      if (event.data && event.data.size > 0) recordingChunks.push(event.data);
+    });
+    mediaRecorder.addEventListener("stop", () => {
+      void finalizeRecording();
+    });
+    mediaRecorder.start();
+    isRecording = true;
+    setRecordingStatus("Recording from microphone...", false);
+    updateRecordingUiState();
+  } catch (error) {
+    stopRecordingStream();
+    setRecordingStatus(error.message || "Microphone access failed.", true);
+    updateRecordingUiState();
+  }
+}
+
+function stopBrowserRecording() {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+  mediaRecorder.stop();
+  isRecording = false;
+  setRecordingStatus("Finishing recording...", false);
+  updateRecordingUiState();
+}
+
+async function finalizeRecording() {
+  try {
+    const recordedBlob = new Blob(recordingChunks, { type: mediaRecorder?.mimeType || "audio/webm" });
+    const wavBlob = await convertRecordedBlobToWav(recordedBlob);
+    currentRecordingBlob = wavBlob;
+    currentRecordedFile = new File([wavBlob], buildRecordedFilename(), { type: "audio/wav" });
+    currentFile = currentRecordedFile;
+    currentRecordingUrl = URL.createObjectURL(wavBlob);
+    renderRecordingPreview(currentRecordingUrl, currentRecordedFile.name, wavBlob.size);
+    setRecordingStatus("Recording ready. Analyze it or save it to the training set.", false);
+  } catch (error) {
+    currentRecordingBlob = null;
+    setRecordingStatus(error.message || "Failed to convert the recording into WAV.", true);
+    if (recordingPreview) {
+      setEmpty(recordingPreview, "processed-player", "Record a clip to preview it here.");
+    }
+  } finally {
+    mediaRecorder = null;
+    recordingChunks = [];
+    stopRecordingStream();
+    isRecording = false;
+    updateRecordingUiState();
+  }
+}
+
+async function saveCurrentRecordingToTrainingSet() {
+  if (!currentRecordedFile || !currentRecordingBlob) {
+    setRecordingStatus("Record audio before saving it to the training set.", true);
+    return;
+  }
+
+  recordSaveButton.disabled = true;
+  try {
+    const formData = new FormData();
+    formData.append("file", currentRecordedFile);
+    formData.append("label", recordingLabelInput.value);
+    formData.append("split", recordingSplitInput.value);
+    formData.append("source_name", recordingSourceNameInput.value.trim() || "browser");
+    const response = await fetch(`${API_BASE_URL}/recordings`, { method: "POST", body: formData });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.detail || "Failed to save the recording.");
+    setRecordingStatus(`Saved training clip to ${payload.relative_path}.`, false);
+  } catch (error) {
+    setRecordingStatus(error.message || "Failed to save the recording.", true);
+  } finally {
+    updateRecordingUiState();
+  }
+}
+
+async function convertRecordedBlobToWav(blob) {
+  const context = getAudioContext();
+  if (context.state === "suspended") {
+    await context.resume();
+  }
+  const audioBuffer = await context.decodeAudioData((await blob.arrayBuffer()).slice(0));
+  return encodeAudioBufferToWav(audioBuffer);
+}
+
+function encodeAudioBufferToWav(audioBuffer) {
+  const channelData = audioBuffer.getChannelData(0);
+  const bytesPerSample = 2;
+  const blockAlign = bytesPerSample;
+  const byteRate = audioBuffer.sampleRate * blockAlign;
+  const dataLength = channelData.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(buffer);
+
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + dataLength, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, audioBuffer.sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bytesPerSample * 8, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (let index = 0; index < channelData.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, channelData[index]));
+    view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    offset += bytesPerSample;
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function writeAscii(view, offset, value) {
+  for (let index = 0; index < value.length; index += 1) {
+    view.setUint8(offset + index, value.charCodeAt(index));
+  }
+}
+
+function buildRecordedFilename() {
+  const stamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
+  return `recording-${stamp}.wav`;
+}
+
+function renderRecordingPreview(url, filename, byteCount) {
+  if (!recordingPreview) return;
+  recordingPreview.className = "processed-player";
+  recordingPreview.innerHTML = `<strong>${escapeHtml(filename)}</strong><p class="muted">${Math.round(byteCount / 1024)} KB WAV clip ready for analysis or training ingest.</p><audio controls preload="metadata" src="${escapeHtml(url)}"></audio>`;
+}
+
+function stopRecordingStream() {
+  if (recordingStream) {
+    recordingStream.getTracks().forEach((track) => track.stop());
+    recordingStream = null;
+  }
+}
+
+function setRecordingStatus(message, isError) {
+  if (!recordingStatus) return;
+  recordingStatus.textContent = message;
+  recordingStatus.classList.toggle("error", Boolean(isError));
+}
+
+function updateRecordingUiState() {
+  const hasAnalyzableFile = Boolean(fileInput?.files?.[0] || currentFile);
+  if (recordStartButton) recordStartButton.disabled = isRecording;
+  if (recordStopButton) recordStopButton.disabled = !isRecording;
+  if (recordAnalyzeButton) recordAnalyzeButton.disabled = isRecording || !hasAnalyzableFile;
+  if (recordSaveButton) recordSaveButton.disabled = isRecording || !currentRecordingBlob;
 }
 
 function renderAnalysis(payload) {
@@ -160,10 +389,23 @@ function renderPlayback(payload) {
     drawWaveform(getCurrentPlaybackMs());
     drawSpectrogram(getCurrentPlaybackMs());
   });
-  currentAudioElement.addEventListener("play", () => { playToggle.textContent = "Pause"; });
-  currentAudioElement.addEventListener("pause", () => { playToggle.textContent = "Play"; });
-  currentAudioElement.addEventListener("play", () => syncProcessedAudioPlaybackState(true));
-  currentAudioElement.addEventListener("pause", () => syncProcessedAudioPlaybackState(false));
+  currentAudioElement.addEventListener("play", () => {
+    playToggle.textContent = "Pause";
+    if (suppressProcessedPlaybackSync) {
+      suppressProcessedPlaybackSync = false;
+      return;
+    }
+    syncProcessedAudioPlaybackState(true);
+  });
+  currentAudioElement.addEventListener("pause", () => {
+    playToggle.textContent = "Play";
+    if (suppressProcessedPlaybackSync) {
+      suppressProcessedPlaybackSync = false;
+      return;
+    }
+    syncProcessedAudioPlaybackState(false);
+  });
+  currentAudioElement.addEventListener("ended", () => syncProcessedAudioPlaybackState(false));
   playToggle.addEventListener("click", () => currentAudioElement.paused ? currentAudioElement.play() : currentAudioElement.pause());
   jumpSelection.addEventListener("click", () => { if (activeDetectionIndex >= 0) focusDetection(activeDetectionIndex, false); });
   scrubber.addEventListener("input", () => handleSeek(Number(scrubber.value), payload.metadata.duration_ms));
@@ -288,15 +530,39 @@ function renderProcessedAudio(payload) {
   shell.querySelector("#play-both").addEventListener("click", async () => {
     if (!currentProcessedAudioElement) return;
     syncProcessedAudioPosition(true);
+    suppressProcessedPlaybackSync = true;
     if (currentAudioElement) await currentAudioElement.play();
+    suppressOriginalPlaybackSync = true;
     await currentProcessedAudioElement.play();
   });
   currentProcessedAudioElement.addEventListener("play", () => {
+    if (suppressOriginalPlaybackSync) {
+      suppressOriginalPlaybackSync = false;
+      return;
+    }
     syncProcessedAudioPosition(true);
-    if (currentAudioElement?.paused) void currentAudioElement.play();
+    if (currentAudioElement?.paused) {
+      suppressProcessedPlaybackSync = true;
+      void currentAudioElement.play().catch(() => {
+        suppressProcessedPlaybackSync = false;
+      });
+    }
   });
   currentProcessedAudioElement.addEventListener("pause", () => {
-    if (currentAudioElement && !currentAudioElement.paused) currentAudioElement.pause();
+    if (suppressOriginalPlaybackSync) {
+      suppressOriginalPlaybackSync = false;
+      return;
+    }
+    if (currentAudioElement && !currentAudioElement.paused) {
+      suppressProcessedPlaybackSync = true;
+      currentAudioElement.pause();
+    }
+  });
+  currentProcessedAudioElement.addEventListener("ended", () => {
+    if (currentAudioElement && !currentAudioElement.paused) {
+      suppressProcessedPlaybackSync = true;
+      currentAudioElement.pause();
+    }
   });
 }
 
@@ -555,11 +821,17 @@ function syncProcessedAudioPlaybackState(shouldPlay) {
   if (!currentProcessedAudioElement) return;
   if (shouldPlay) {
     syncProcessedAudioPosition(true);
-    if (currentProcessedAudioElement.paused) void currentProcessedAudioElement.play().catch(() => {});
+    if (currentProcessedAudioElement.paused) {
+      suppressOriginalPlaybackSync = true;
+      void currentProcessedAudioElement.play().catch(() => {
+        suppressOriginalPlaybackSync = false;
+      });
+    }
     return;
   }
 
   if (!currentProcessedAudioElement.paused) {
+    suppressOriginalPlaybackSync = true;
     currentProcessedAudioElement.pause();
   }
 }
@@ -572,11 +844,16 @@ function clearResults() {
   currentWaveformPeaks = [];
   currentSpectrogramFrames = [];
   currentWaveformDurationMs = 0;
+  if (!currentRecordingBlob) {
+    currentRecordedFile = null;
+  }
 
   if (currentAudioElement && !currentAudioElement.paused) currentAudioElement.pause();
   if (currentProcessedAudioElement && !currentProcessedAudioElement.paused) currentProcessedAudioElement.pause();
   currentAudioElement = null;
   currentProcessedAudioElement = null;
+  suppressOriginalPlaybackSync = false;
+  suppressProcessedPlaybackSync = false;
 
   if (currentAudioUrl) URL.revokeObjectURL(currentAudioUrl);
   if (currentProcessedAudioUrl) URL.revokeObjectURL(currentProcessedAudioUrl);
@@ -594,6 +871,7 @@ function clearResults() {
   if (detectionsCaption) {
     detectionsCaption.textContent = "Highest-confidence labels returned by the active classifier backend.";
   }
+  updateRecordingUiState();
 }
 
 async function refreshSessionList() {
@@ -644,12 +922,19 @@ async function loadSavedSession(sessionId) {
     if (!response.ok) throw new Error(payload.detail || "Failed to load session.");
     currentSessionId = payload.session_id;
     currentFile = buildFileFromBase64(payload.original_audio_base64, payload.filename);
+    currentRecordedFile = null;
+    currentRecordingBlob = null;
+    if (recordingPreview) {
+      setEmpty(recordingPreview, "processed-player", "Record a clip to preview it here.");
+    }
+    setRecordingStatus("Microphone idle.", false);
     await prepareAudioPreview(currentFile);
     currentAnalysis = payload.analysis;
     activeDetectionIndex = payload.analysis.detections.length ? 0 : -1;
     renderAnalysis(payload.analysis);
     renderProcessedAudio(payload.processed_response);
     setStatus(`Loaded saved session for ${payload.filename}.`, false);
+    updateRecordingUiState();
   } catch (error) {
     setStatus(error.message || "Failed to load session.", true);
   }
@@ -662,3 +947,5 @@ function buildFileFromBase64(base64Value, filename) {
 
 function settingsDefaultAttenuation() { return "0.20"; }
 function formatSuppressionProfile(profile) { return Object.entries(profile).map(([label, factor]) => `${label}: ${Number(factor).toFixed(2)}`).join(", "); }
+
+updateRecordingUiState();

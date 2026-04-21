@@ -75,6 +75,48 @@ h1 {
   margin-bottom: 24px;
 }
 
+.recorder-panel {
+  display: grid;
+  gap: 18px;
+  margin-bottom: 24px;
+}
+
+.recording-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.85fr;
+  gap: 18px;
+}
+
+.recording-actions,
+.recording-save-form {
+  display: grid;
+  gap: 12px;
+}
+
+.recording-save-form label {
+  display: grid;
+  gap: 8px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.recording-save-form input,
+.recording-save-form select {
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(27, 28, 29, 0.12);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink);
+  font: inherit;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
 .upload-form {
   display: flex;
   flex-wrap: wrap;
@@ -515,6 +557,10 @@ code {
   }
 
   .suppression-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recording-grid {
     grid-template-columns: 1fr;
   }
 

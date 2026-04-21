@@ -1,6 +1,7 @@
-import wave
 import base64
 import json
+import math
+import wave
 from dataclasses import dataclass
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -16,7 +17,8 @@ from .audio import (
 )
 from .classifier import build_classifier_detections
 from .config import settings
-from .model_loader import build_inference_backend
+from .model_loader import PredictionResult, build_inference_backend
+from .recording_store import save_training_recording
 from .session_store import create_analysis_session, list_sessions, load_session, update_processed_session
 from .schemas import (
     AnalysisResponse,
@@ -26,6 +28,7 @@ from .schemas import (
     HealthResponse,
     ProcessResponse,
     ProcessedAudio,
+    SavedRecordingResponse,
     SessionDetailResponse,
     SessionListResponse,
     SpectralFeatures,
@@ -51,6 +54,7 @@ app.add_middleware(
 inference_backend = build_inference_backend(
     supported_classes=settings.supported_classes,
     confidence_threshold=settings.classifier_confidence_threshold,
+    class_confidence_thresholds=settings.class_confidence_thresholds,
     baseline_name=settings.classifier_name,
     manifest_path=settings.trained_model_manifest_path,
 )
@@ -92,6 +96,46 @@ async def get_session(session_id: str) -> SessionDetailResponse:
         raise HTTPException(status_code=404, detail="Session not found.") from exc
 
     return SessionDetailResponse(**session_record)
+
+
+@app.post("/recordings", response_model=SavedRecordingResponse)
+async def save_recording(
+    file: UploadFile = File(...),
+    label: str = Form(...),
+    split: str = Form(""),
+    source_name: str = Form("browser"),
+) -> SavedRecordingResponse:
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="An uploaded file is required.")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=400, detail="The uploaded file is empty.")
+
+    try:
+        decoded_audio = decode_wav(file_bytes)
+    except (wave.Error, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    try:
+        saved_recording = save_training_recording(
+            file_bytes=file_bytes,
+            label=label,
+            split=split,
+            source_name=source_name,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return SavedRecordingResponse(
+        **saved_recording,
+        duration_ms=decoded_audio.duration_ms,
+        sample_rate_hz=decoded_audio.sample_rate_hz,
+        message=(
+            "Saved the WAV recording into the training real_recordings directory for "
+            "future manifest generation and retraining."
+        ),
+    )
 
 
 @app.post("/analyze", response_model=AnalysisResponse)
@@ -229,13 +273,12 @@ async def _prepare_analysis(file: UploadFile) -> PreparedAnalysis:
         samples=processed_audio.samples,
         sample_rate_hz=processed_audio.sample_rate_hz,
     )
-    raw_detections, classifier_source, used_fallback = build_classifier_detections(
+    raw_detections, classifier_sources, used_fallback = build_windowed_detections(
         classifier=inference_backend,
         samples=processed_audio.samples,
         sample_rate_hz=processed_audio.sample_rate_hz,
-        features=features,
-        spectral_features=spectral_features,
-        duration_ms=decoded_audio.duration_ms,
+        chunk_duration_ms=settings.chunk_duration_ms,
+        chunk_overlap_ms=settings.chunk_overlap_ms,
     )
     detections = [
         DetectionResult(**detection)
@@ -249,10 +292,209 @@ async def _prepare_analysis(file: UploadFile) -> PreparedAnalysis:
         processed_audio=processed_audio,
         features=features,
         spectral_features=spectral_features,
-        classifier_source=classifier_source,
+        classifier_source=", ".join(classifier_sources),
         used_fallback=used_fallback,
         detections=detections,
     )
+
+
+def build_windowed_detections(
+    *,
+    classifier: object,
+    samples: list[float],
+    sample_rate_hz: int,
+    chunk_duration_ms: int,
+    chunk_overlap_ms: int,
+) -> tuple[list[dict[str, float | int | str]], list[str], bool]:
+    chunk_sample_count = max(1, int((chunk_duration_ms / 1000) * sample_rate_hz))
+    overlap_sample_count = max(0, int((chunk_overlap_ms / 1000) * sample_rate_hz))
+    window_starts = _build_window_start_indices(
+        total_sample_count=len(samples),
+        chunk_sample_count=chunk_sample_count,
+        overlap_sample_count=overlap_sample_count,
+    )
+
+    window_detections: list[dict[str, float | int | str]] = []
+    classifier_sources: set[str] = set()
+    used_fallback = False
+    top_window_labels: list[str] = []
+
+    for start_index in window_starts:
+        end_index = min(len(samples), start_index + chunk_sample_count)
+        window_samples = samples[start_index:end_index]
+        if not window_samples:
+            continue
+
+        window_features = extract_features(
+            samples=window_samples,
+            sample_rate_hz=sample_rate_hz,
+        )
+        window_spectral_features = extract_log_mel_features(
+            samples=window_samples,
+            sample_rate_hz=sample_rate_hz,
+        )
+        prediction_result = _predict_window(
+            classifier=classifier,
+            samples=window_samples,
+            sample_rate_hz=sample_rate_hz,
+            features=window_features,
+            spectral_features=window_spectral_features,
+        )
+        classifier_sources.add(prediction_result.source_name)
+        used_fallback = used_fallback or prediction_result.used_fallback
+        if prediction_result.predictions:
+            top_window_labels.append(prediction_result.predictions[0].label)
+
+        start_ms = int(round((start_index / sample_rate_hz) * 1000))
+        end_ms = int(round((end_index / sample_rate_hz) * 1000))
+        for prediction in prediction_result.predictions:
+            window_detections.append(
+                {
+                    "label": prediction.label,
+                    "confidence": prediction.confidence,
+                    "start_ms": start_ms,
+                    "end_ms": max(end_ms, start_ms + 1),
+                }
+            )
+
+    merged_detections = _merge_detection_windows(
+        detections=window_detections,
+        merge_gap_ms=max(0, chunk_overlap_ms),
+    )
+    merged_detections = _filter_merged_detections(
+        detections=merged_detections,
+        top_window_labels=top_window_labels,
+        used_fallback=used_fallback,
+    )
+    return merged_detections, sorted(classifier_sources), used_fallback
+
+
+def _predict_window(
+    *,
+    classifier: object,
+    samples: list[float],
+    sample_rate_hz: int,
+    features: object,
+    spectral_features: object,
+) -> PredictionResult:
+    if hasattr(classifier, "predict_with_metadata"):
+        return classifier.predict_with_metadata(
+            samples=samples,
+            sample_rate_hz=sample_rate_hz,
+            features=features,
+            spectral_features=spectral_features,
+        )
+
+    raw_predictions = classifier.predict(
+        samples=samples,
+        sample_rate_hz=sample_rate_hz,
+        features=features,
+        spectral_features=spectral_features,
+    )
+    return PredictionResult(
+        predictions=raw_predictions,
+        source_name=getattr(classifier, "name", classifier.__class__.__name__),
+        used_fallback=False,
+    )
+
+
+def _build_window_start_indices(
+    *,
+    total_sample_count: int,
+    chunk_sample_count: int,
+    overlap_sample_count: int,
+) -> list[int]:
+    if total_sample_count <= 0:
+        return [0]
+
+    bounded_chunk_sample_count = max(1, chunk_sample_count)
+    step_sample_count = max(1, bounded_chunk_sample_count - max(0, overlap_sample_count))
+    if total_sample_count <= bounded_chunk_sample_count:
+        return [0]
+
+    last_start_index = max(0, total_sample_count - bounded_chunk_sample_count)
+    window_starts = list(range(0, last_start_index + 1, step_sample_count))
+    if window_starts[-1] != last_start_index:
+        window_starts.append(last_start_index)
+    return window_starts
+
+
+def _merge_detection_windows(
+    *,
+    detections: list[dict[str, float | int | str]],
+    merge_gap_ms: int,
+) -> list[dict[str, float | int | str]]:
+    if not detections:
+        return []
+
+    merged_by_label: dict[str, list[dict[str, float | int | str]]] = {}
+    for detection in sorted(
+        detections,
+        key=lambda item: (str(item["label"]), int(item["start_ms"]), -float(item["confidence"])),
+    ):
+        label = str(detection["label"])
+        target_detections = merged_by_label.setdefault(label, [])
+        if not target_detections:
+            target_detections.append(detection.copy())
+            continue
+
+        previous_detection = target_detections[-1]
+        if int(detection["start_ms"]) <= int(previous_detection["end_ms"]) + merge_gap_ms:
+            previous_detection["end_ms"] = max(
+                int(previous_detection["end_ms"]),
+                int(detection["end_ms"]),
+            )
+            previous_detection["confidence"] = round(
+                max(float(previous_detection["confidence"]), float(detection["confidence"])),
+                3,
+            )
+            continue
+
+        target_detections.append(detection.copy())
+
+    merged_detections = [
+        detection
+        for detections_for_label in merged_by_label.values()
+        for detection in detections_for_label
+    ]
+    merged_detections.sort(
+        key=lambda item: (int(item["start_ms"]), -float(item["confidence"]), str(item["label"]))
+    )
+    return merged_detections
+
+
+def _filter_merged_detections(
+    *,
+    detections: list[dict[str, float | int | str]],
+    top_window_labels: list[str],
+    used_fallback: bool,
+) -> list[dict[str, float | int | str]]:
+    if not detections or not used_fallback or not top_window_labels:
+        return detections
+
+    top_label_counts: dict[str, int] = {}
+    for label in top_window_labels:
+        top_label_counts[label] = top_label_counts.get(label, 0) + 1
+
+    total_window_count = len(top_window_labels)
+    dominant_label, dominant_count = max(
+        top_label_counts.items(),
+        key=lambda item: (item[1], item[0]),
+    )
+    dominant_share = dominant_count / total_window_count
+    allowed_labels = {dominant_label}
+
+    if dominant_share < settings.fallback_dominant_label_share_threshold:
+        for label, count in top_label_counts.items():
+            if count / total_window_count >= settings.fallback_secondary_label_share_threshold:
+                allowed_labels.add(label)
+
+    filtered_detections = [
+        detection
+        for detection in detections
+        if str(detection["label"]) in allowed_labels
+    ]
+    return filtered_detections or detections
 
 
 def _build_audio_metadata(prepared: PreparedAnalysis) -> AudioMetadata:
