@@ -66,6 +66,8 @@ let currentDatasetRecording = null;
 let trainingStatusRefreshHandle = null;
 let artifactActivationInFlight = false;
 let trainingUploadInFlight = false;
+let currentPreviewPreparationPromise = null;
+let currentPreviewPreparationKey = "";
 
 const dashboardSectionElements = Array.from(document.querySelectorAll("[data-dashboard-section]"));
 const workspaceTabButtons = Array.from(document.querySelectorAll("[data-toggle-section]"));
@@ -158,16 +160,17 @@ async function analyzeCurrentFile() {
 
   submitButton.disabled = true;
   recordAnalyzeButton.disabled = true;
-  setStatus(`Sending ${file.name} to the backend for analysis...`, false);
+  setStatus(`Analyzing ${file.name} with the backend...`, false);
   try {
     currentFile = file;
+    const previewPromise = ensureAudioPreviewPrepared(file);
     const formData = new FormData();
     formData.append("file", file);
     const response = await fetch(`${API_BASE_URL}/analyze`, { method: "POST", body: formData });
-    setStatus(`Backend finished uploading ${file.name}. Processing response...`, false);
+    setStatus(`Backend response received for ${file.name}. Rendering the preview...`, false);
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Analysis request failed.");
-    await prepareAudioPreview(file);
+    await previewPromise;
     currentAnalysis = payload;
     currentSessionId = payload.session_id;
     activeDetectionIndex = payload.detections.length ? 0 : -1;
@@ -202,6 +205,25 @@ async function prepareAudioPreview(file) {
   }
 }
 
+function ensureAudioPreviewPrepared(file) {
+  const previewKey = buildPreviewPreparationKey(file);
+  if (
+    currentPreviewPreparationPromise &&
+    currentPreviewPreparationKey === previewKey
+  ) {
+    return currentPreviewPreparationPromise;
+  }
+
+  currentPreviewPreparationKey = previewKey;
+  currentPreviewPreparationPromise = prepareAudioPreview(file);
+  return currentPreviewPreparationPromise;
+}
+
+function buildPreviewPreparationKey(file) {
+  if (!file) return "";
+  return [file.name || "", file.size || 0, file.lastModified || 0].join(":");
+}
+
 async function resolveAnalyzableFile() {
   if (currentRecordedFile) {
     currentFile = currentRecordedFile;
@@ -223,6 +245,7 @@ async function convertSelectedUploadToWav(file) {
   try {
     const wavFile = await convertAudioFileToWav(file);
     currentFile = wavFile;
+    currentPreviewPreparationPromise = ensureAudioPreviewPrepared(wavFile);
     setStatus(
       wavFile.name === file.name
         ? `${file.name} is ready for analysis.`
@@ -288,6 +311,7 @@ async function finalizeRecording() {
     currentFile = currentRecordedFile;
     currentUploadConversionPromise = null;
     currentRecordingUrl = URL.createObjectURL(wavBlob);
+    currentPreviewPreparationPromise = ensureAudioPreviewPrepared(currentRecordedFile);
     renderRecordingPreview(currentRecordingUrl, currentRecordedFile.name, wavBlob.size);
     setRecordingStatus("Recording ready. Analyze it or save it to the training set.", false);
   } catch (error) {
@@ -1108,6 +1132,8 @@ function clearResults() {
   currentSpectrogramFrames = [];
   currentWaveformDurationMs = 0;
   currentUploadConversionPromise = null;
+  currentPreviewPreparationPromise = null;
+  currentPreviewPreparationKey = "";
   if (!currentRecordingBlob) {
     currentRecordedFile = null;
   }

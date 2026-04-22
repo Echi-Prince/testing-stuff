@@ -15,13 +15,15 @@ What it contains
    - Local generator for a starter synthetic WAV dataset and manifest.
 6. `build_real_manifest.py`
    - Builds a manifest from real class-labeled WAV recordings.
-7. `real_recordings/README.md`
+7. `convert_real_recordings_to_pcm.py`
+   - Rewrites non-PCM or non-16-bit WAV files into PCM 16-bit WAV so the manifest builder and backend loader can read them.
+8. `real_recordings/README.md`
    - Expected folder layout for real recordings.
-8. `requirements.txt`
+9. `requirements.txt`
    - Training-only dependencies.
-9. Browser-assisted collection flow
+10. Browser-assisted collection flow
    - The frontend can now record microphone audio and save labeled WAV clips into `training/real_recordings/` through the backend `POST /recordings` endpoint.
-10. Artifact version history
+11. Artifact version history
    - Completed training runs are archived into `training/artifacts/versions/<run_id>/`, and the active manifest is tracked in `training/artifacts/active-model.json`.
 
 Dataset manifest format
@@ -61,6 +63,7 @@ Real data flow
 2. Build a manifest:
 
 ```powershell
+training\.venv\Scripts\python -m training.convert_real_recordings_to_pcm --source-dir training\real_recordings
 training\.venv\Scripts\python -m training.build_real_manifest --source-dir training\real_recordings --output-manifest training\real_recordings\manifest.jsonl
 ```
 
@@ -89,3 +92,4 @@ Notes
 4. `build_real_manifest.py` accepts either `real_recordings/<label>/*.wav` or `real_recordings/<split>/<label>/*.wav` layouts.
 5. The recording ingest route writes browser-captured WAV files into that same layout so manifest generation does not need a separate conversion step.
 6. The inference path now checks the active manifest first, then older archived manifests, before finally degrading to the baseline heuristic classifier.
+7. `train.py` now uses inverse-frequency class weights plus weighted sampling so minority classes are not drowned out during training.
