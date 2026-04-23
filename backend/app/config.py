@@ -31,7 +31,7 @@ def _data_path(relative_path: str) -> str:
 class AppConfig(BaseModel):
     sample_rate_hz: int = _env_int("SOUND_DASHBOARD_SAMPLE_RATE_HZ", 16000)
     chunk_duration_ms: int = _env_int("SOUND_DASHBOARD_CHUNK_DURATION_MS", 1000)
-    chunk_overlap_ms: int = _env_int("SOUND_DASHBOARD_CHUNK_OVERLAP_MS", 500)
+    chunk_overlap_ms: int = _env_int("SOUND_DASHBOARD_CHUNK_OVERLAP_MS", 250)
     classifier_name: str = os.getenv("SOUND_DASHBOARD_CLASSIFIER_NAME", "baseline_rules_v1")
     classifier_confidence_threshold: float = _env_float(
         "SOUND_DASHBOARD_CLASSIFIER_CONFIDENCE_THRESHOLD",

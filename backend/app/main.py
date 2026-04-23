@@ -72,6 +72,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+async def warm_backend_runtime() -> None:
+    # Force model/runtime loading before the first user analysis request.
+    try:
+        inference_backend = get_inference_backend()
+        _predict_window(
+            classifier=inference_backend,
+            samples=[0.0] * settings.sample_rate_hz,
+            sample_rate_hz=settings.sample_rate_hz,
+            features=None,
+            spectral_features=None,
+        )
+    except Exception:
+        # Keep startup resilient; normal request-time error handling still applies.
+        return
+
 @dataclass
 class PreparedAnalysis:
     filename: str
