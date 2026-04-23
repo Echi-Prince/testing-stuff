@@ -184,8 +184,8 @@ async function analyzeCurrentFile() {
     currentSessionId = payload.session_id;
     activeDetectionIndex = payload.detections.length ? 0 : -1;
     renderAnalysis(payload);
-    await refreshSessionList();
     setStatus(`Analysis complete for ${payload.filename}.`, false);
+    void refreshSessionList();
     void previewPromise.then(() => {
       if (currentAnalysis?.session_id !== payload.session_id) return;
       renderInteractiveViews();
@@ -718,8 +718,8 @@ function renderPlayback(payload) {
       const suppressionProfile = getSuppressionProfile();
       saveSuppressionPreset(suppressionProfile);
       renderProcessedAudio(await requestProcessedAudio({ file: currentFile, suppressionProfile }));
-      await refreshSessionList();
       setStatus("Suppression preview ready.", false);
+      void refreshSessionList();
     } catch (error) {
       renderProcessedAudio(null);
       setStatus(error.message || "Suppression preview failed.", true);

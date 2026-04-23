@@ -555,6 +555,8 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(session_detail.original_audio_base64)
         self.assertTrue(session_detail.analysis.classifier_source)
         self.assertIsNone(session_detail.processed_response)
+        self.assertTrue((Path(settings.session_store_dir) / f"{analysis.session_id}.summary.json").exists())
+        self.assertTrue((Path(settings.session_store_dir) / f"{analysis.session_id}.original.wav").exists())
 
     async def test_analyze_audio_rejects_missing_filename(self) -> None:
         upload = UploadFile(
@@ -626,6 +628,7 @@ class ApiRouteTests(unittest.IsolatedAsyncioTestCase):
             session_detail.processed_response.processed_audio.suppressed_classes,
             ["traffic", "music"],
         )
+        self.assertTrue((Path(settings.session_store_dir) / f"{analysis.session_id}.processed.wav").exists())
 
     async def test_process_audio_accepts_per_class_suppression_profile(self) -> None:
         upload = UploadFile(

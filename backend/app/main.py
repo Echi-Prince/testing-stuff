@@ -1,5 +1,6 @@
 import base64
 import json
+import logging
 import math
 import wave
 from dataclasses import dataclass
@@ -55,6 +56,7 @@ from .schemas import (
 )
 from .training_manager import get_training_status, start_training_run
 
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title="Sound Dashboard API",
@@ -75,19 +77,10 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def warm_backend_runtime() -> None:
-    # Force model/runtime loading before the first user analysis request.
     try:
-        inference_backend = get_inference_backend()
-        _predict_window(
-            classifier=inference_backend,
-            samples=[0.0] * settings.sample_rate_hz,
-            sample_rate_hz=settings.sample_rate_hz,
-            features=None,
-            spectral_features=None,
-        )
+        _warm_inference_backend()
     except Exception:
-        # Keep startup resilient; normal request-time error handling still applies.
-        return
+        logger.exception("Backend warm-up failed during startup; the first analysis request may be slower.")
 
 @dataclass
 class PreparedAnalysis:
@@ -330,7 +323,7 @@ async def analyze_audio(file: UploadFile = File(...)) -> AnalysisResponse:
     session_record = create_analysis_session(
         filename=prepared.filename,
         analysis_response=analysis_response.model_dump(),
-        original_audio_base64=base64.b64encode(prepared.file_bytes).decode("ascii"),
+        original_audio_bytes=prepared.file_bytes,
     )
     return AnalysisResponse(**session_record["analysis"])
 
@@ -562,6 +555,17 @@ def _predict_window(
         predictions=raw_predictions,
         source_name=getattr(classifier, "name", classifier.__class__.__name__),
         used_fallback=False,
+    )
+
+
+def _warm_inference_backend() -> None:
+    inference_backend = get_inference_backend()
+    _predict_window(
+        classifier=inference_backend,
+        samples=[0.0] * settings.sample_rate_hz,
+        sample_rate_hz=settings.sample_rate_hz,
+        features=None,
+        spectral_features=None,
     )
 
 
