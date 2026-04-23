@@ -2,11 +2,29 @@ const API_BASE_URL = resolveApiBaseUrl();
 const API_LABEL = API_BASE_URL || window.location.origin;
 
 function resolveApiBaseUrl() {
+  const configuredBaseUrl = normalizeApiBaseUrl(readConfiguredApiBaseUrl());
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
   const currentOrigin = window.location.origin || "";
   if (currentOrigin === "http://127.0.0.1:3000" || currentOrigin === "http://localhost:3000") {
     return "http://127.0.0.1:8000";
   }
   return "";
+}
+
+function readConfiguredApiBaseUrl() {
+  const windowOverride = typeof window.SOUND_DASHBOARD_API_BASE_URL === "string"
+    ? window.SOUND_DASHBOARD_API_BASE_URL.trim()
+    : "";
+  if (windowOverride) return windowOverride;
+
+  const metaOverride = document.querySelector('meta[name="sound-dashboard-api-base-url"]')?.content?.trim() || "";
+  return metaOverride;
+}
+
+function normalizeApiBaseUrl(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
 }
 
 const uploadForm = document.querySelector("#upload-form");
