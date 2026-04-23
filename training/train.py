@@ -68,32 +68,48 @@ def train_waveform_model(
         settings.sample_rate_hz * (settings.chunk_duration_ms / 1000.0)
     )
 
-    class WaveformDataset(Dataset):
-        def __init__(self, subset):
-            self.subset = subset
-
-        def __len__(self) -> int:
-            return len(self.subset)
-
-        def __getitem__(self, index: int):
-            example = self.subset[index]
+    def _preload_dataset(subset, subset_name: str):
+        waveforms = []
+        targets = []
+        total = len(subset)
+        for index, example in enumerate(subset, start=1):
             waveform = load_preprocessed_waveform(
                 audio_path=example.audio_path,
                 sample_rate_hz=settings.sample_rate_hz,
                 input_sample_count=input_sample_count,
             )
-            return (
-                torch.tensor(waveform, dtype=torch.float32).unsqueeze(0),
-                torch.tensor(label_to_index[example.label], dtype=torch.long),
-            )
+            waveforms.append(waveform)
+            targets.append(label_to_index[example.label])
+            if total and (index == total or index % 250 == 0):
+                print(f"preload subset={subset_name} {index}/{total}")
+        return torch.tensor(waveforms, dtype=torch.float32).unsqueeze(1), torch.tensor(
+            targets,
+            dtype=torch.long,
+        )
+
+    class WaveformDataset(Dataset):
+        def __init__(self, waveforms, targets):
+            self.waveforms = waveforms
+            self.targets = targets
+
+        def __len__(self) -> int:
+            return int(self.targets.shape[0])
+
+        def __getitem__(self, index: int):
+            return self.waveforms[index], self.targets[index]
+
+    train_waveforms, train_targets = _preload_dataset(train_examples, "train")
+    validation_source = val_examples or train_examples
+    validation_name = "val" if val_examples else "train_fallback"
+    val_waveforms, val_targets = _preload_dataset(validation_source, validation_name)
 
     train_loader = DataLoader(
-        WaveformDataset(train_examples),
+        WaveformDataset(train_waveforms, train_targets),
         batch_size=batch_size,
         shuffle=True,
     )
     val_loader = DataLoader(
-        WaveformDataset(val_examples or train_examples),
+        WaveformDataset(val_waveforms, val_targets),
         batch_size=batch_size,
         shuffle=False,
     )
